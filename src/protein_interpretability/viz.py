@@ -130,8 +130,8 @@ def plot_all_layers_sorted_paged(
     # shared colorbar (use a dummy mappable with same norm)
     mappable = plt.cm.ScalarMappable(norm=norm, cmap=plt.get_cmap())
     mappable.set_array([])  # required by some mpl versions
-    cbar = fig.colorbar(mappable, ax=axes, fraction=0.02, pad=0.02)
-    cbar.set_label("mean |act| (sorted)")
+    # cbar = fig.colorbar(mappable, ax=axes, fraction=0.02, pad=0.02)
+    # cbar.set_label("mean |act| (sorted)")
 
     if title is not None:
         fig.suptitle(title, y=1.02, fontsize=14)
