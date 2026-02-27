@@ -161,3 +161,42 @@ class ESM3ActivationExtractor:
         for s in self.activations:
             out.update(s.keys())
         return sorted(out)
+
+    def get_mean_activations_per_layer(
+        self,
+        step: int | None = None,
+        reduce_batch: bool = True,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Mean activation per layer (over sequence dim, optionally over batch).
+
+        Only layer keys (layer_*_block, layer_*_attn, etc.) are included.
+        If multiple steps exist, they are averaged first.
+
+        Args:
+            step: If set, use only this step; else average over all steps.
+            reduce_batch: If True and tensor has batch dim (ndim > 2),
+                reduce over batch first. Output then (D,) per layer.
+                If False, output is (B, D) when batched.
+
+        Returns:
+            dict[layer_key] -> tensor of shape (D,) or (B, D).
+        """
+        layer_keys = [k for k in self.step_keys() if k.startswith("layer_")]
+        out: dict[str, torch.Tensor] = {}
+        for k in layer_keys:
+            if step is not None:
+                d = self.get_step(step)
+                if k not in d:
+                    continue
+                t = d[k]
+            else:
+                tensors = self.get_site(k)
+                if not tensors:
+                    continue
+                t = torch.stack(tensors, dim=0).mean(dim=0)
+            if t.dim() > 2 and reduce_batch:
+                t = t.mean(dim=0)
+            t = t.mean(dim=-2)
+            out[k] = t
+        return out

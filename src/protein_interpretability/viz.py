@@ -13,6 +13,13 @@ from protein_interpretability.utils import sort_layer_activations
 _LAYER_KEY_RE = re.compile(r"^layer_(\d+)_(block|attn|geom_attn|ffn)$")
 
 
+def _reduce_batch_if_needed(t: torch.Tensor) -> torch.Tensor:
+    """If tensor has batch dim (ndim > 2), return mean over dim=0; else return as-is."""
+    if t.dim() > 2:
+        return t.mean(dim=0)
+    return t
+
+
 def plot_all_layers_sorted_paged(
     activations: dict[str, torch.Tensor],
     *,
@@ -70,7 +77,7 @@ def plot_all_layers_sorted_paged(
     for k in layer_keys:
         if k not in activations:
             raise KeyError(f"Key '{k}' not present in activations.")
-        act_sorted, _ = sort_layer_activations(activations[k])  # <-- your helper
+        act_sorted, _ = sort_layer_activations(_reduce_batch_if_needed(activations[k]))
         acts_sorted.append(act_sorted)
 
     # We keep the global matrix for global vmin/vmax
@@ -93,9 +100,9 @@ def plot_all_layers_sorted_paged(
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(fig_w, fig_h), squeeze=False)
 
     norm = mcolors.LogNorm(vmin=full_vmin, vmax=full_vmax) if lognorm else None
+    cmap = "viridis"  # same for heatmaps and colorbar
 
     # put a single shared colorbar on the right
-    # We'll draw heatmaps without their own cbar, then add one mappable.
     for p in range(n_plots):
         r = p // ncols
         c = p % ncols
@@ -112,6 +119,7 @@ def plot_all_layers_sorted_paged(
             chunk_matrix,
             ax=ax,
             norm=norm,
+            cmap=cmap,
             cbar=False,
             xticklabels=False,
             yticklabels=chunk_labels,
@@ -127,14 +135,14 @@ def plot_all_layers_sorted_paged(
         c = p % ncols
         axes[r][c].axis("off")
 
-    # shared colorbar (use a dummy mappable with same norm)
-    mappable = plt.cm.ScalarMappable(norm=norm, cmap=plt.get_cmap())
-    mappable.set_array([])  # required by some mpl versions
-    # cbar = fig.colorbar(mappable, ax=axes, fraction=0.02, pad=0.02)
-    # cbar.set_label("mean |act| (sorted)")
+    # shared colorbar: same norm and cmap as heatmaps, in reserved space (no overlap)
+    mappable = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    mappable.set_array([])
+    fig.tight_layout(rect=[0, 0, 0.88, 1])  # leave right 12% for colorbar
+    cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+    cbar = fig.colorbar(mappable, cax=cbar_ax)
+    cbar.set_label("mean |act| (sorted)")
 
     if title is not None:
         fig.suptitle(title, y=1.02, fontsize=14)
-
-    fig.tight_layout()
     return fig, axes
