@@ -325,12 +325,119 @@ def make_sequence_figure(sequence: str, attention_data: dict, layer: str, head: 
     return fig
 
 
+# ── Figure 3: Conservation vs Attention Rollout ────────────────────────────
+
+def make_conservation_attention_figure(
+    sequence: str, attention_data: dict, conservation: np.ndarray,
+    head: str = "mean", layer: str | None = None,
+) -> go.Figure:
+    """Conservation vs attention metric.
+
+    If layer is None, uses attention rollout across all layers.
+    If layer is given, uses column sum of that single layer.
+    """
+    L = len(sequence)
+    residues = list(sequence)
+    positions = list(range(1, L + 1))
+
+    if layer is None:
+        attn_score = rollout_column_sum(attention_data)
+        metric_name = "Attention rollout"
+    else:
+        attn_score = column_sum(attention_data[layer], head)
+        metric_name = f"Column sum — {layer}"
+
+    attn_norm = (attn_score - attn_score.min()) / (attn_score.max() - attn_score.min() + 1e-12)
+    cons_norm = conservation
+
+    hover = [
+        f"<b>Pos {p}: {aa}</b><br>"
+        f"Conservation: {conservation[i]:.3f}<br>"
+        f"{metric_name}: {attn_score[i]:.4f}"
+        for i, (p, aa) in enumerate(zip(positions, residues))
+    ]
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.55, 0.45],
+        vertical_spacing=0.12,
+        subplot_titles=[
+            f"Conservation vs {metric_name} per residue",
+            f"Conservation vs {metric_name} scatter",
+        ],
+    )
+
+    # ── Top: overlaid bar chart ──
+    fig.add_trace(
+        go.Bar(
+            x=positions, y=cons_norm, name="Conservation",
+            marker_color="rgba(55, 128, 191, 0.6)",
+            hovertext=hover, hoverinfo="text",
+        ),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=positions, y=attn_norm, name=f"{metric_name} (norm)",
+            mode="lines+markers",
+            line=dict(color="rgba(219, 64, 82, 0.9)", width=1.5),
+            marker=dict(size=3),
+            hovertext=hover, hoverinfo="text",
+        ),
+        row=1, col=1,
+    )
+
+    fig.update_xaxes(
+        tickvals=positions, ticktext=residues,
+        tickfont=dict(size=8, family="Courier New"),
+        tickangle=0, row=1, col=1,
+    )
+    fig.update_yaxes(title_text="Normalized score", row=1, col=1)
+
+    # ── Bottom: scatter plot ──
+    fig.add_trace(
+        go.Scatter(
+            x=conservation, y=attn_score,
+            mode="markers+text",
+            text=residues,
+            textposition="top center",
+            textfont=dict(size=7, family="Courier New"),
+            marker=dict(
+                size=7, color=positions, colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Position", x=1.01, len=0.4, y=0.18),
+            ),
+            hovertext=hover, hoverinfo="text",
+            name="Residues",
+            showlegend=False,
+        ),
+        row=2, col=1,
+    )
+    fig.update_xaxes(title_text="Conservation score", row=2, col=1)
+    fig.update_yaxes(title_text=metric_name, row=2, col=1)
+
+    # Correlation
+    corr = np.corrcoef(conservation, attn_score)[0, 1]
+
+    width = max(1200, L * 18)
+    fig.update_layout(
+        title=f"Conservation vs {metric_name} (Pearson r = {corr:.3f})",
+        height=900,
+        width=width,
+        template="plotly_white",
+        legend=dict(x=0.85, y=1.0),
+    )
+
+    return fig
+
+
 def main():
     parser = argparse.ArgumentParser(description="Interactive Boltz attention visualization")
     parser.add_argument("--attention", required=True, help="Path to .npz attention file")
     parser.add_argument("--sequence", required=True, help="Path to YAML sequence file")
     parser.add_argument("--layer", default="pairformer_layer_47")
     parser.add_argument("--head", default="mean", help="Head index or 'mean'")
+    parser.add_argument("--msa", default=None, help="Path to .a3m MSA file for conservation")
     parser.add_argument("--output", default=None, help="Output HTML file prefix")
     args = parser.parse_args()
 
@@ -340,17 +447,27 @@ def main():
     fig_main = make_main_figure(sequence, attention_data, args.layer, args.head)
     fig_seq = make_sequence_figure(sequence, attention_data, args.layer, args.head)
 
+    figs = {"main": fig_main, "sequence": fig_seq}
+
+    if args.msa:
+        from protein_interpretability.utils import conservation_score
+        conservation = conservation_score(args.msa)
+        fig_rollout = make_conservation_attention_figure(
+            sequence, attention_data, conservation, args.head, layer=None)
+        fig_layer = make_conservation_attention_figure(
+            sequence, attention_data, conservation, args.head, layer=args.layer)
+        figs["conservation_rollout"] = fig_rollout
+        figs["conservation_layer"] = fig_layer
+
     if args.output:
         prefix = args.output.removesuffix(".html")
-        path_main = f"{prefix}_main.html"
-        path_seq = f"{prefix}_sequence.html"
-        fig_main.write_html(path_main)
-        fig_seq.write_html(path_seq)
-        print(f"Saved: {path_main}")
-        print(f"Saved: {path_seq}")
+        for name, fig in figs.items():
+            path = f"{prefix}_{name}.html"
+            fig.write_html(path)
+            print(f"Saved: {path}")
     else:
-        fig_main.show()
-        fig_seq.show()
+        for fig in figs.values():
+            fig.show()
 
 
 if __name__ == "__main__":
