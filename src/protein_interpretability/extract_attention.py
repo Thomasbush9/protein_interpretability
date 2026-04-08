@@ -18,7 +18,6 @@ import gc
 import os
 import warnings
 from dataclasses import asdict
-from functools import wraps
 from pathlib import Path
 from typing import Optional
 
@@ -39,106 +38,9 @@ from boltz.main import (
     filter_inputs_structure,
     process_inputs,
 )
-from boltz.model.layers.attentionv2 import AttentionPairBias
 from boltz.model.models.boltz2 import Boltz2
 
-
-class AttentionStore:
-    """Collects attention maps from hooked AttentionPairBias modules."""
-
-    def __init__(self):
-        self.maps: dict[str, torch.Tensor] = {}
-        self._hooks = []
-
-    def clear(self):
-        self.maps.clear()
-
-    def hook_model(self, model: Boltz2, layer_indices: Optional[list[int]] = None):
-        """Install hooks on Pairformer AttentionPairBias layers.
-
-        Parameters
-        ----------
-        model : Boltz2
-            The model instance.
-        layer_indices : list[int] | None
-            Which Pairformer layer indices to hook. None means all layers.
-
-        """
-        # Get the uncompiled pairformer module
-        pairformer = model.pairformer_module
-        if hasattr(pairformer, "_orig_mod"):
-            pairformer = pairformer._orig_mod  # noqa: SLF001
-
-        for i, layer in enumerate(pairformer.layers):
-            if layer_indices is not None and i not in layer_indices:
-                continue
-
-            attn_module = layer.attention
-            self._patch_attention(attn_module, f"pairformer_layer_{i}")
-
-    def _patch_attention(self, module: AttentionPairBias, name: str):
-        """Monkey-patch forward to capture attention weights after softmax."""
-        original_forward = module.forward
-        store = self
-
-        @wraps(original_forward)
-        def patched_forward(s, z, mask, k_in, multiplicity=1):
-            B = s.shape[0]
-
-            q = module.proj_q(s).view(B, -1, module.num_heads, module.head_dim)
-            k = module.proj_k(k_in).view(B, -1, module.num_heads, module.head_dim)
-            v = module.proj_v(k_in).view(B, -1, module.num_heads, module.head_dim)
-
-            bias = module.proj_z(z)
-            bias = bias.repeat_interleave(multiplicity, 0)
-
-            g = module.proj_g(s).sigmoid()
-
-            with torch.autocast("cuda", enabled=False):
-                attn = torch.einsum("bihd,bjhd->bhij", q.float(), k.float())
-                attn = attn / (module.head_dim**0.5) + bias.float()
-                attn = attn + (1 - mask[:, None, None].float()) * -module.inf
-                attn = attn.softmax(dim=-1)
-
-                # Store attention weights (detach + move to CPU to save GPU memory)
-                store.maps[name] = attn.detach().cpu()
-
-                o = torch.einsum("bhij,bjhd->bihd", attn, v.float()).to(v.dtype)
-            o = o.reshape(B, -1, module.c_s)
-            o = module.proj_o(g * o)
-            return o
-
-        module.forward = patched_forward
-
-    def remove_hooks(self):
-        for h in self._hooks:
-            h.remove()
-        self._hooks.clear()
-
-    def get_attention(
-        self, average_heads: bool = False
-    ) -> dict[str, torch.Tensor]:
-        """Return collected attention maps.
-
-        Parameters
-        ----------
-        average_heads : bool
-            If True, average across attention heads, returning (B, N, N).
-            Otherwise returns (B, H, N, N).
-
-        Returns
-        -------
-        dict[str, Tensor]
-            Mapping from layer name to attention tensor.
-
-        """
-        out = {}
-        for name, attn in self.maps.items():
-            if average_heads:
-                out[name] = attn.mean(dim=1)  # (B, N, N)
-            else:
-                out[name] = attn
-        return out
+from protein_interpretability.extractor_boltz import Boltz2Extractor
 
 
 def parse_args():
@@ -306,13 +208,14 @@ def main():
     if args.layers != "all":
         layer_indices = [int(x.strip()) for x in args.layers.split(",")]
 
-    # Install attention hooks
-    store = AttentionStore()
-    store.hook_model(model, layer_indices=layer_indices)
+    # Install attention hooks via Boltz2Extractor
+    extractor = Boltz2Extractor(
+        model, sites=[], layers=layer_indices, layer_sites=["attention_weights"],
+    )
+    extractor._install()
 
-    num_layers = len(model.pairformer_module.layers)
-    if hasattr(model.pairformer_module, "_orig_mod"):
-        num_layers = len(model.pairformer_module._orig_mod.layers)  # noqa: SLF001
+    pairformer = Boltz2Extractor._unwrap(model.pairformer_module)
+    num_layers = len(pairformer.layers)
     captured = len(layer_indices) if layer_indices else num_layers
     print(f"Hooking {captured}/{num_layers} Pairformer layers")
 
@@ -334,7 +237,7 @@ def main():
             for k, v in batch.items()
         }
 
-        store.clear()
+        extractor.clear()
 
         # Run forward pass (just the trunk, not the full predict_step)
         _ = model(
@@ -344,8 +247,17 @@ def main():
             diffusion_samples=args.diffusion_samples,
         )
 
-        # Collect attention maps
-        attention = store.get_attention(average_heads=args.average_heads)
+        # Collect attention maps from the last recycling step
+        step = extractor.get_step(-1)
+        attention = {}
+        for k, v in step.items():
+            if "attention_weights" in k:
+                # Rename pairformer_0_attention_weights -> pairformer_layer_0
+                # for backward compat with existing .npz files and plot_attention.py
+                layer_name = k.replace("_attention_weights", "").replace(
+                    "pairformer_", "pairformer_layer_"
+                )
+                attention[layer_name] = v.mean(dim=1) if args.average_heads else v
 
         # Get record ID for filename
         record_id = filtered_manifest.records[batch_idx].id
@@ -381,6 +293,7 @@ def main():
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
+    extractor.remove()
     print(f"\nDone. Attention maps saved to {attn_dir}")
 
 
