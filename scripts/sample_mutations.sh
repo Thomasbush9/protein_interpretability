@@ -28,7 +28,9 @@
 #
 # The source FASTA directory is expected to contain files named
 # "seq_${idx}.fasta", where ${idx} is the 0-based data-row index in the TSV
-# (row 0 is wild-type and is skipped).
+# (row 0 is wild-type and is skipped), zero-padded to the width of the
+# largest index (e.g. "seq_00001.fasta", "seq_54024.fasta"). The padding
+# width is controlled by IDX_WIDTH (default: 5).
 
 set -euo pipefail
 
@@ -41,6 +43,7 @@ HIGH_MAX="${HIGH_MAX:-2.8}"       # brightness <= HIGH_MAX   -> high-effect
 NEUTRAL_MIN="${NEUTRAL_MIN:-3.7}" # brightness >= NEUTRAL_MIN -> neutral
 MAX_PER_MUT="${MAX_PER_MUT:-5}"   # each mutation token in at most N picked multi rows
 SEED="${SEED:-42}"
+IDX_WIDTH="${IDX_WIDTH:-5}"       # zero-pad width for seq_XXXXX.fasta filenames
 
 # --- CLI override -----------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
         --neutral-min) NEUTRAL_MIN="$2"; shift 2 ;;
         --max-per-mut) MAX_PER_MUT="$2"; shift 2 ;;
         --seed)        SEED="$2"; shift 2 ;;
+        --idx-width)   IDX_WIDTH="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,35p' "$0"; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -88,6 +92,7 @@ echo "[INFO] HIGH_MAX    = $HIGH_MAX    (brightness <= this = high-effect)"
 echo "[INFO] NEUTRAL_MIN = $NEUTRAL_MIN (brightness >= this = neutral)"
 echo "[INFO] MAX_PER_MUT = $MAX_PER_MUT (diversity cap for multi_mut)"
 echo "[INFO] SEED        = $SEED"
+echo "[INFO] IDX_WIDTH   = $IDX_WIDTH (zero-pad width for seq_XXXXX.fasta)"
 
 # --- Sampling (Python) ------------------------------------------------------
 python3 - \
@@ -208,7 +213,8 @@ for variant in single_mut multi_mut; do
         while IFS=$'\t' read -r idx muts bright; do
             [[ "$idx" == "idx" ]] && continue  # header
             [[ -z "$idx" ]] && continue
-            src="$FASTA_DIR/seq_${idx}.fasta"
+            padded_idx=$(printf "%0${IDX_WIDTH}d" "$idx")
+            src="$FASTA_DIR/seq_${padded_idx}.fasta"
             if [[ -f "$src" ]]; then
                 cp "$src" "$dest/"
                 total_copied=$((total_copied + 1))
