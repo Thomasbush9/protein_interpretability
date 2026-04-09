@@ -24,17 +24,17 @@ def load_structure(path: str | Path, structure_id: str | None = None) -> Structu
     return parser.get_structure(structure_id or structure_path.stem, str(structure_path))
 
 
-def extract_residue_coordinates(
+def _select_chain(
     structure: Structure,
-    chain_id: str | None = None,
-    model_index: int = 0,
-    atom_name: str = "CA",
-) -> tuple[np.ndarray, list[tuple[str, int, str]]]:
-    """Extract per-residue coordinates for one atom from a structure model.
+    chain_id: str | None,
+    model_index: int,
+):
+    """Return the single chain to score.
 
-    Returns coordinates with shape ``(N, 3)`` and residue identifiers as
-    ``(chain_id, residue_number, insertion_code)`` tuples. Hetero residues are
-    skipped, as are residues that do not contain the requested atom.
+    This toolkit targets mutations of a single wildtype chain, so the
+    structure must contain exactly one chain unless ``chain_id`` is given
+    explicitly. Multi-chain structures without an explicit selection raise
+    ``ValueError`` to prevent silent mis-alignment.
     """
     models = list(structure.get_models())
     if not models:
@@ -43,21 +43,42 @@ def extract_residue_coordinates(
         raise IndexError(
             f"Model index {model_index} is out of range for {len(models)} model(s)."
         )
-
     model = models[model_index]
-    if chain_id is None:
-        chains = list(model.get_chains())
-    else:
+
+    if chain_id is not None:
         if chain_id not in model:
             raise ValueError(f"Chain '{chain_id}' not found in model {model.id}.")
-        chains = [model[chain_id]]
+        return model[chain_id]
 
-    coordinates, _, residue_ids = _extract_chain_data(chains, atom_name=atom_name)
+    chains = list(model.get_chains())
+    if len(chains) != 1:
+        chain_ids = [c.id for c in chains]
+        raise ValueError(
+            f"Structure has {len(chains)} chains ({chain_ids}); "
+            "pass chain_id explicitly."
+        )
+    return chains[0]
+
+
+def extract_residue_coordinates(
+    structure: Structure,
+    chain_id: str | None = None,
+    model_index: int = 0,
+    atom_name: str = "CA",
+) -> tuple[np.ndarray, list[tuple[str, int, str]]]:
+    """Extract per-residue coordinates for one atom from a single chain.
+
+    Returns coordinates with shape ``(N, 3)`` and residue identifiers as
+    ``(chain_id, residue_number, insertion_code)`` tuples. Hetero residues are
+    skipped, as are residues that do not contain the requested atom. If the
+    structure has more than one chain, ``chain_id`` must be given explicitly.
+    """
+    chain = _select_chain(structure, chain_id, model_index)
+    coordinates, _, residue_ids = _extract_chain_data(chain, atom_name=atom_name)
     if not len(coordinates):
         raise ValueError(
-            f"No polymer residues with atom '{atom_name}' were found in the selected structure."
+            f"No polymer residues with atom '{atom_name}' were found in chain '{chain.id}'."
         )
-
     return coordinates, residue_ids
 
 
@@ -68,49 +89,33 @@ def extract_residue_sequence(
     atom_name: str = "CA",
 ) -> str:
     """Extract the residue sequence corresponding to the selected atom trace."""
-    models = list(structure.get_models())
-    if not models:
-        raise ValueError("Structure does not contain any models.")
-    if model_index >= len(models):
-        raise IndexError(
-            f"Model index {model_index} is out of range for {len(models)} model(s)."
-        )
-
-    model = models[model_index]
-    if chain_id is None:
-        chains = list(model.get_chains())
-    else:
-        if chain_id not in model:
-            raise ValueError(f"Chain '{chain_id}' not found in model {model.id}.")
-        chains = [model[chain_id]]
-
-    _, sequence, residue_ids = _extract_chain_data(chains, atom_name=atom_name)
+    chain = _select_chain(structure, chain_id, model_index)
+    _, sequence, residue_ids = _extract_chain_data(chain, atom_name=atom_name)
     if not residue_ids:
         raise ValueError(
-            f"No polymer residues with atom '{atom_name}' were found in the selected structure."
+            f"No polymer residues with atom '{atom_name}' were found in chain '{chain.id}'."
         )
     return sequence
 
 
 def _extract_chain_data(
-    chains,
+    chain,
     atom_name: str,
 ) -> tuple[np.ndarray, str, list[tuple[str, int, str]]]:
     coordinates: list[np.ndarray] = []
     sequence: list[str] = []
     residue_ids: list[tuple[str, int, str]] = []
 
-    for chain in chains:
-        for residue in chain.get_residues():
-            hetflag, residue_number, insertion_code = residue.id
-            if hetflag.strip():
-                continue
-            if atom_name not in residue:
-                continue
+    for residue in chain.get_residues():
+        hetflag, residue_number, insertion_code = residue.id
+        if hetflag.strip():
+            continue
+        if atom_name not in residue:
+            continue
 
-            coordinates.append(residue[atom_name].coord.astype(np.float64, copy=True))
-            sequence.append(_resname_to_one_letter(residue.resname))
-            residue_ids.append((chain.id, int(residue_number), insertion_code.strip()))
+        coordinates.append(residue[atom_name].coord.astype(np.float64, copy=True))
+        sequence.append(_resname_to_one_letter(residue.resname))
+        residue_ids.append((chain.id, int(residue_number), insertion_code.strip()))
 
     if not coordinates:
         return np.empty((0, 3), dtype=np.float64), "", []
@@ -190,30 +195,12 @@ def structure_tm_score(
     normalize_by: str = "reference",
 ) -> float:
     """Compute the canonical TM-score between two structures with TM-align."""
-    if chain_id is None:
-        ref_chains = list(reference_structure.get_chains())
-        pred_chains = list(predicted_structure.get_chains())
-        if len(ref_chains) == 1 and len(pred_chains) == 1:
-            ref_coords, ref_sequence, _ = _extract_chain_data(
-                [ref_chains[0]], atom_name=atom_name
-            )
-            pred_coords, pred_sequence, _ = _extract_chain_data(
-                [pred_chains[0]], atom_name=atom_name
-            )
-        else:
-            ref_coords, ref_sequence = _extract_coords_and_sequence(
-                reference_structure, chain_id=chain_id, atom_name=atom_name
-            )
-            pred_coords, pred_sequence = _extract_coords_and_sequence(
-                predicted_structure, chain_id=chain_id, atom_name=atom_name
-            )
-    else:
-        ref_coords, ref_sequence = _extract_coords_and_sequence(
-            reference_structure, chain_id=chain_id, atom_name=atom_name
-        )
-        pred_coords, pred_sequence = _extract_coords_and_sequence(
-            predicted_structure, chain_id=chain_id, atom_name=atom_name
-        )
+    ref_coords, ref_sequence = _extract_coords_and_sequence(
+        reference_structure, chain_id=chain_id, atom_name=atom_name
+    )
+    pred_coords, pred_sequence = _extract_coords_and_sequence(
+        predicted_structure, chain_id=chain_id, atom_name=atom_name
+    )
     return tm_score(
         ref_coords,
         pred_coords,
@@ -230,11 +217,11 @@ def structure_rmsd(
     atom_name: str = "CA",
 ) -> float:
     """Compute RMSD from the canonical TM-align alignment between two structures."""
-    ref_coords, pred_coords, ref_sequence, pred_sequence = _extract_pair_inputs(
-        reference_structure,
-        predicted_structure,
-        chain_id=chain_id,
-        atom_name=atom_name,
+    ref_coords, ref_sequence = _extract_coords_and_sequence(
+        reference_structure, chain_id=chain_id, atom_name=atom_name
+    )
+    pred_coords, pred_sequence = _extract_coords_and_sequence(
+        predicted_structure, chain_id=chain_id, atom_name=atom_name
     )
     return rmsd(ref_coords, pred_coords, ref_sequence, pred_sequence)
 
@@ -273,33 +260,6 @@ def path_rmsd(
         chain_id=chain_id,
         atom_name=atom_name,
     )
-
-
-def _extract_pair_inputs(
-    reference_structure: Structure,
-    predicted_structure: Structure,
-    chain_id: str | None,
-    atom_name: str,
-) -> tuple[np.ndarray, np.ndarray, str, str]:
-    if chain_id is None:
-        ref_chains = list(reference_structure.get_chains())
-        pred_chains = list(predicted_structure.get_chains())
-        if len(ref_chains) == 1 and len(pred_chains) == 1:
-            ref_coords, ref_sequence, _ = _extract_chain_data(
-                [ref_chains[0]], atom_name=atom_name
-            )
-            pred_coords, pred_sequence, _ = _extract_chain_data(
-                [pred_chains[0]], atom_name=atom_name
-            )
-            return ref_coords, pred_coords, ref_sequence, pred_sequence
-
-    ref_coords, ref_sequence = _extract_coords_and_sequence(
-        reference_structure, chain_id=chain_id, atom_name=atom_name
-    )
-    pred_coords, pred_sequence = _extract_coords_and_sequence(
-        predicted_structure, chain_id=chain_id, atom_name=atom_name
-    )
-    return ref_coords, pred_coords, ref_sequence, pred_sequence
 
 
 def _extract_coords_and_sequence(
