@@ -33,7 +33,7 @@
 set -euo pipefail
 
 # --- Defaults ---------------------------------------------------------------
-TSV="${TSV:-$HOME/Downloads/raw_data/amino_acid_genotypes_to_brightness.tsv}"
+TSV="/n/home06/tbush/gfp_function_prediction/data/raw_data/amino_acid_genotypes_to_brightness.tsv"
 FASTA_DIR="${FASTA_DIR:-}"
 OUT_DIR="${OUT_DIR:-}"
 N_PER_GROUP="${N_PER_GROUP:-100}"
