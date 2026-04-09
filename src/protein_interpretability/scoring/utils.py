@@ -131,6 +131,42 @@ def tm_score(
     normalize_by: str = "reference",
 ) -> float:
     """Compute the canonical TM-score via TM-align."""
+    result = _tm_align_result(
+        reference_coords,
+        predicted_coords,
+        reference_sequence,
+        predicted_sequence,
+    )
+    if normalize_by == "reference":
+        return float(result.tm_norm_chain1)
+    if normalize_by == "predicted":
+        return float(result.tm_norm_chain2)
+    raise ValueError("normalize_by must be either 'reference' or 'predicted'.")
+
+
+def rmsd(
+    reference_coords: np.ndarray,
+    predicted_coords: np.ndarray,
+    reference_sequence: str,
+    predicted_sequence: str,
+) -> float:
+    """Compute RMSD from the canonical TM-align structural alignment."""
+    result = _tm_align_result(
+        reference_coords,
+        predicted_coords,
+        reference_sequence,
+        predicted_sequence,
+    )
+    return float(result.rmsd)
+
+
+def _tm_align_result(
+    reference_coords: np.ndarray,
+    predicted_coords: np.ndarray,
+    reference_sequence: str,
+    predicted_sequence: str,
+):
+    """Run TM-align and return the raw result object."""
     reference = np.asarray(reference_coords, dtype=np.float64, order="C")
     predicted = np.asarray(predicted_coords, dtype=np.float64, order="C")
 
@@ -143,12 +179,7 @@ def tm_score(
     if len(predicted) != len(predicted_sequence):
         raise ValueError("predicted_coords and predicted_sequence must have matching lengths.")
 
-    result = tm_align(reference, predicted, reference_sequence, predicted_sequence)
-    if normalize_by == "reference":
-        return float(result.tm_norm_chain1)
-    if normalize_by == "predicted":
-        return float(result.tm_norm_chain2)
-    raise ValueError("normalize_by must be either 'reference' or 'predicted'.")
+    return tm_align(reference, predicted, reference_sequence, predicted_sequence)
 
 
 def structure_tm_score(
@@ -192,6 +223,22 @@ def structure_tm_score(
     )
 
 
+def structure_rmsd(
+    reference_structure: Structure,
+    predicted_structure: Structure,
+    chain_id: str | None = None,
+    atom_name: str = "CA",
+) -> float:
+    """Compute RMSD from the canonical TM-align alignment between two structures."""
+    ref_coords, pred_coords, ref_sequence, pred_sequence = _extract_pair_inputs(
+        reference_structure,
+        predicted_structure,
+        chain_id=chain_id,
+        atom_name=atom_name,
+    )
+    return rmsd(ref_coords, pred_coords, ref_sequence, pred_sequence)
+
+
 def path_tm_score(
     reference_path: str | Path,
     predicted_path: str | Path,
@@ -209,6 +256,50 @@ def path_tm_score(
         atom_name=atom_name,
         normalize_by=normalize_by,
     )
+
+
+def path_rmsd(
+    reference_path: str | Path,
+    predicted_path: str | Path,
+    chain_id: str | None = None,
+    atom_name: str = "CA",
+) -> float:
+    """Load two structures and compute RMSD from the TM-align alignment."""
+    reference_structure = load_structure(reference_path)
+    predicted_structure = load_structure(predicted_path)
+    return structure_rmsd(
+        reference_structure,
+        predicted_structure,
+        chain_id=chain_id,
+        atom_name=atom_name,
+    )
+
+
+def _extract_pair_inputs(
+    reference_structure: Structure,
+    predicted_structure: Structure,
+    chain_id: str | None,
+    atom_name: str,
+) -> tuple[np.ndarray, np.ndarray, str, str]:
+    if chain_id is None:
+        ref_chains = list(reference_structure.get_chains())
+        pred_chains = list(predicted_structure.get_chains())
+        if len(ref_chains) == 1 and len(pred_chains) == 1:
+            ref_coords, ref_sequence, _ = _extract_chain_data(
+                [ref_chains[0]], atom_name=atom_name
+            )
+            pred_coords, pred_sequence, _ = _extract_chain_data(
+                [pred_chains[0]], atom_name=atom_name
+            )
+            return ref_coords, pred_coords, ref_sequence, pred_sequence
+
+    ref_coords, ref_sequence = _extract_coords_and_sequence(
+        reference_structure, chain_id=chain_id, atom_name=atom_name
+    )
+    pred_coords, pred_sequence = _extract_coords_and_sequence(
+        predicted_structure, chain_id=chain_id, atom_name=atom_name
+    )
+    return ref_coords, pred_coords, ref_sequence, pred_sequence
 
 
 def _extract_coords_and_sequence(
