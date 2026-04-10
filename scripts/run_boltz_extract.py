@@ -144,7 +144,10 @@ def build_command(
     runtime: dict,
 ) -> list[str]:
     """Build the extract_hidden_reps.py command line for one chunk."""
-    recycling_step_save = -2 if extraction.get("save_all_recycling_steps", True) else -1
+    recycling_save = extraction.get("recycling_steps_to_save", "last")
+    # Backward compat: old boolean key
+    if "save_all_recycling_steps" in extraction and "recycling_steps_to_save" not in extraction:
+        recycling_save = "all" if extraction["save_all_recycling_steps"] else "last"
 
     cmd = [
         python_exe,
@@ -171,8 +174,8 @@ def build_command(
         format_list_arg(extraction.get("sites", "all")),
         "--layer_sites",
         format_list_arg(extraction.get("layer_sites", "all")),
-        "--recycling_step",
-        str(recycling_step_save),
+        "--recycling_steps_to_save",
+        format_list_arg(recycling_save),
         "--num_workers",
         str(runtime.get("num_workers", 2)),
     ]
@@ -294,6 +297,11 @@ def main() -> None:
 
     repo_src = Path(__file__).resolve().parents[1] / "src"
 
+    # Resolve recycling save config for display
+    recycling_save = extraction_cfg.get("recycling_steps_to_save", "last")
+    if "save_all_recycling_steps" in extraction_cfg and "recycling_steps_to_save" not in extraction_cfg:
+        recycling_save = "all" if extraction_cfg["save_all_recycling_steps"] else "last"
+
     print("=" * 60)
     print("Boltz2 hidden-rep extraction")
     print("=" * 60)
@@ -308,7 +316,7 @@ def main() -> None:
         print(f"    {d.name}: {n} yamls")
     print(f"  recycling     : {boltz_cfg.get('recycling_steps')}")
     print(f"  diffusion     : {boltz_cfg.get('diffusion_samples')}")
-    print(f"  save_all_steps: {extraction_cfg.get('save_all_recycling_steps', True)}")
+    print(f"  recycling_save: {recycling_save}")
     print(f"  sites         : {format_list_arg(extraction_cfg.get('sites', 'all'))}")
     print(f"  layer_sites   : {format_list_arg(extraction_cfg.get('layer_sites', 'all'))}")
     print(f"  layers        : {format_list_arg(extraction_cfg.get('layers', 'all'))}")

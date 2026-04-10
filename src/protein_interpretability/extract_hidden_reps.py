@@ -90,10 +90,16 @@ def parse_args():
         ),
     )
     p.add_argument(
-        "--recycling_step",
-        type=int,
-        default=-1,
-        help="Which recycling step to save (-1 = last, -2 = all). Default: last.",
+        "--recycling_steps_to_save",
+        type=str,
+        default="last",
+        help=(
+            "Which recycling steps to save. "
+            "'last' = final step only, 'all' = every step, "
+            "'every:N' = every Nth step (e.g. 'every:2' saves 0,2,4,...), "
+            "or comma-separated indices e.g. '0,2' (supports negative indexing). "
+            "Default: last."
+        ),
     )
     p.add_argument("--use_msa_server", action="store_true")
     p.add_argument(
@@ -314,15 +320,28 @@ def main():
         model_out_size = model_out_path.stat().st_size / (1024 * 1024)
 
         # ---- Save hidden reps ----
-        if args.recycling_step == -2:
-            # Save all recycling steps
-            hidden_reps = {
-                f"step_{i}": step_dict
-                for i, step_dict in enumerate(extractor.activations)
-            }
+        n_steps = len(extractor.activations)
+        save_arg = args.recycling_steps_to_save
+        if save_arg == "all":
+            step_indices = list(range(n_steps))
+        elif save_arg == "last":
+            step_indices = [-1]
+        elif save_arg.startswith("every:"):
+            stride = int(save_arg.split(":")[1])
+            step_indices = list(range(0, n_steps, stride))
+            # Always include the last step
+            if step_indices[-1] != n_steps - 1:
+                step_indices.append(n_steps - 1)
         else:
-            # Save single recycling step (default: last)
-            hidden_reps = extractor.get_step(args.recycling_step)
+            step_indices = [int(x.strip()) for x in save_arg.split(",")]
+
+        if len(step_indices) == 1:
+            hidden_reps = extractor.get_step(step_indices[0])
+        else:
+            hidden_reps = {
+                f"step_{i % n_steps}": extractor.get_step(i)
+                for i in step_indices
+            }
 
         hidden_reps_path = record_dir / "hidden_reps.pt"
         torch.save(hidden_reps, hidden_reps_path)
@@ -366,7 +385,7 @@ def main():
                 "layers": args.layers,
                 "sites": args.sites,
                 "layer_sites": args.layer_sites,
-                "recycling_step_saved": args.recycling_step,
+                "recycling_steps_saved": args.recycling_steps_to_save,
                 "num_recycling_steps_captured": len(extractor.activations),
             },
             "file_sizes_mb": {

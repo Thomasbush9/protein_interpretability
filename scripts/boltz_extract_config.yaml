@@ -46,8 +46,10 @@ boltz:
 #   sites       — top-level sites: list of names, or "all"
 #   layers      — pairformer layer indices: list of ints, or "all"
 #   layer_sites — per-layer sites: list of names, or "all"
-#   save_all_recycling_steps — true: save every recycling step
-#                              false: save only the final step
+#   recycling_steps_to_save — "last": final step only (default)
+#                            "all": every step
+#                            "every:N": every Nth step (e.g. "every:2" → 0,2,4,…,last)
+#                            comma-separated indices, e.g. "0,2" or "-1"
 #
 # Valid `sites` (see Boltz2Extractor.SITES):
 #   input_embedder, pairformer_s, pairformer_z, distogram
@@ -60,7 +62,7 @@ extraction:
   sites: [pairformer_s, pairformer_z]
   layers: all
   layer_sites: [layer_s, layer_z]
-  save_all_recycling_steps: true
+  recycling_steps_to_save: last
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
 # is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.
