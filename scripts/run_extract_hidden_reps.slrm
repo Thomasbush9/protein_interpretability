@@ -26,7 +26,7 @@
 #   LAYERS               — comma-separated layer indices or "all" (default: all)
 #   SITES                — comma-separated top-level sites or "all" (default: all)
 #   LAYER_SITES          — comma-separated per-layer sites or "all" (default: all)
-#   RECYCLING_STEP_SAVE  — which recycling step to save: -1=last, -2=all (default: -1)
+#   RECYCLING_STEPS_SAVE — which recycling steps to save: "last", "all", "every:N", or "0,2" (default: last)
 #   EXTRACT_REPO         — path to protein_interpretability repo
 # ===========================================================================
 
@@ -45,7 +45,7 @@ DIFFUSION_SAMPLES="${DIFFUSION_SAMPLES:-1}"
 LAYERS="${LAYERS:-all}"
 SITES="${SITES:-all}"
 LAYER_SITES="${LAYER_SITES:-all}"
-RECYCLING_STEP_SAVE="${RECYCLING_STEP_SAVE:--1}"
+RECYCLING_STEPS_SAVE="${RECYCLING_STEPS_SAVE:-last}"
 EXTRACT_REPO="${EXTRACT_REPO:-$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")}"
 
 # ---- Environment setup ----
@@ -79,7 +79,7 @@ echo "  Diffusion samples:$DIFFUSION_SAMPLES"
 echo "  Layers:           $LAYERS"
 echo "  Sites:            $SITES"
 echo "  Layer sites:      $LAYER_SITES"
-echo "  Save step:        $RECYCLING_STEP_SAVE"
+echo "  Save steps:       $RECYCLING_STEPS_SAVE"
 echo "==============================================="
 
 # ---- Run extraction ----
@@ -95,7 +95,7 @@ python -m protein_interpretability.extract_hidden_reps \
     --layers "$LAYERS" \
     --sites "$SITES" \
     --layer_sites "$LAYER_SITES" \
-    --recycling_step "$RECYCLING_STEP_SAVE"
+    --recycling_steps_to_save "$RECYCLING_STEPS_SAVE"
 
 echo ""
 echo "==============================================="
