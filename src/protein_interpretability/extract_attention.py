@@ -4,7 +4,7 @@ Uses forward hooks to capture softmaxed attention weights from each
 AttentionPairBias layer in the Pairformer trunk, without modifying Boltz source code.
 
 Usage:
-    python scripts/extract_attention.py input.yaml \
+    python -m protein_interpretability.extract_attention input.yaml \
         --out_dir ./attention_output \
         --layers all \
         --average_heads
@@ -212,7 +212,7 @@ def main():
     extractor = Boltz2Extractor(
         model, sites=[], layers=layer_indices, layer_sites=["attention_weights"],
     )
-    extractor._install()
+    extractor.install()
 
     pairformer = Boltz2Extractor._unwrap(model.pairformer_module)
     num_layers = len(pairformer.layers)
@@ -259,8 +259,8 @@ def main():
                 )
                 attention[layer_name] = v.mean(dim=1) if args.average_heads else v
 
-        # Get record ID for filename
-        record_id = filtered_manifest.records[batch_idx].id
+        # Get record ID from the batch (set by Boltz's PredictionDataset)
+        record_id = batch["record"][0].id
 
         # Get token mask for reference
         token_mask = batch["token_pad_mask"].cpu()
@@ -280,12 +280,18 @@ def main():
             np_data = {k: v.numpy() for k, v in save_data.items()}
             np.savez_compressed(f"{save_path}.npz", **np_data)
 
-        shape_info = next(iter(attention.values())).shape
-        print(
-            f"[{batch_idx + 1}/{len(dataloader)}] Saved attention for '{record_id}' "
-            f"| shape per layer: {list(shape_info)} "
-            f"| {len(attention)} layers -> {save_path}.{args.save_format}"
-        )
+        if attention:
+            shape_info = next(iter(attention.values())).shape
+            print(
+                f"[{batch_idx + 1}/{len(dataloader)}] Saved attention for '{record_id}' "
+                f"| shape per layer: {list(shape_info)} "
+                f"| {len(attention)} layers -> {save_path}.{args.save_format}"
+            )
+        else:
+            print(
+                f"[{batch_idx + 1}/{len(dataloader)}] WARNING: no attention captured "
+                f"for '{record_id}' — check --layers argument"
+            )
 
         # Free memory
         del attention

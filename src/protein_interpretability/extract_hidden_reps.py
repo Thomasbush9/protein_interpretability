@@ -258,7 +258,7 @@ def main():
         layers=layer_indices,
         layer_sites=layer_sites,
     )
-    extractor._install()
+    extractor.install()
 
     pairformer = Boltz2Extractor._unwrap(model.pairformer_module)
     num_layers = len(pairformer.layers)
@@ -291,7 +291,7 @@ def main():
             diffusion_samples=args.diffusion_samples,
         )
 
-        record_id = filtered_manifest.records[batch_idx].id
+        record_id = batch["record"][0].id
         record_dir = out_dir / record_id
         record_dir.mkdir(parents=True, exist_ok=True)
 

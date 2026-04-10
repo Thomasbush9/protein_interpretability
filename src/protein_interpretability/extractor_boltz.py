@@ -81,6 +81,8 @@ class Boltz2Extractor:
 
         self._handles: list[torch.utils.hooks.RemovableHook] = []
         self._patched: list[tuple[nn.Module, str, Any]] = []  # (module, attr, original)
+        self._installed: bool = False
+        self._pairformer_calls: int = 0
         self.activations: list[dict[str, torch.Tensor]] = []
 
     # ------------------------------------------------------------------
@@ -107,14 +109,35 @@ class Boltz2Extractor:
     # Hook installation
     # ------------------------------------------------------------------
 
-    def _install(self) -> None:
+    def install(self) -> None:
+        """Install hooks and monkey-patches on the model.
+
+        Safe to call multiple times — subsequent calls are no-ops.
+        """
+        if self._installed:
+            return
+
         pairformer = self._unwrap(self.model.pairformer_module)
         n_layers = len(pairformer.layers)
         layer_indices = self.layers if self.layers is not None else list(range(n_layers))
 
-        # --- Recycling-step boundary: pre-hook on pairformer appends new dict
+        # --- Validate layer indices up-front
+        invalid = [i for i in layer_indices if i < 0 or i >= n_layers]
+        if invalid:
+            raise ValueError(
+                f"Layer indices {invalid} are out of range for "
+                f"{n_layers}-layer pairformer (valid: 0..{n_layers - 1})"
+            )
+
+        # --- Recycling-step boundary: pre-hook on pairformer appends new dict.
+        # On the *first* pairformer call we reuse the dict already seeded by
+        # input_embedder (if any); subsequent calls open a new recycling step.
         def pairformer_pre_hook(module: nn.Module, inputs: Any) -> None:
-            self.activations.append({})
+            if self._pairformer_calls > 0:
+                self.activations.append({})
+            elif not self.activations:
+                self.activations.append({})
+            self._pairformer_calls += 1
 
         self._handles.append(
             pairformer.register_forward_pre_hook(pairformer_pre_hook)
@@ -151,10 +174,8 @@ class Boltz2Extractor:
                 self.model.distogram_module.register_forward_hook(distogram_hook)
             )
 
-        # --- Per-layer hooks
+        # --- Per-layer hooks (indices already validated above)
         for i in layer_indices:
-            if i < 0 or i >= n_layers:
-                continue
             layer = pairformer.layers[i]
             prefix = f"pairformer_{i}"
 
@@ -198,6 +219,8 @@ class Boltz2Extractor:
                         self._store(f"{p}_{sn}", self._tensor_from_out(output))
 
                     self._handles.append(submod.register_forward_hook(sub_hook))
+
+        self._installed = True
 
     def _patch_attention_weights(self, module: nn.Module, key: str) -> None:
         """Monkey-patch AttentionPairBias.forward to capture post-softmax weights."""
@@ -247,22 +270,24 @@ class Boltz2Extractor:
         for module, attr, original in self._patched:
             setattr(module, attr, original)
         self._patched.clear()
+        self._installed = False
 
     def clear(self) -> None:
         """Clear stored activations (hooks remain installed)."""
         self.activations.clear()
+        self._pairformer_calls = 0
 
     @contextlib.contextmanager
     def recording(self):
         """Context manager: install hooks, yield, then remove hooks."""
-        self._install()
+        self.install()
         try:
             yield self
         finally:
             self.remove()
 
     def __enter__(self) -> Boltz2Extractor:
-        self._install()
+        self.install()
         return self
 
     def __exit__(self, *args: Any) -> None:

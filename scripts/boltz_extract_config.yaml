@@ -1,0 +1,75 @@
+# Configuration for scripts/run_boltz_extract.py
+#
+# Runs Boltz2 hidden-representation extraction over a directory of sequences
+# laid out as:
+#
+#     <sequences_dir>/
+#       seq_00132/
+#         msa/
+#         seq_00132.yaml
+#       seq_00318/
+#         ...
+#
+# Each yaml is symlinked into a per-GPU chunk directory and Boltz is launched
+# in parallel via `python -m protein_interpretability.extract_hidden_reps`.
+# MSAs referenced inside the yamls must use absolute paths (this is what
+# ProtForge's organize_msa_outputs.py does by default), otherwise the symlinks
+# would break MSA resolution.
+
+input:
+  # Directory containing per-sequence subdirs (yamls discovered via rglob '*.yaml').
+  # A flat directory of yamls also works.
+  sequences_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/sequences
+
+  # Optional: only run on yamls whose stem matches one of the lines in this file.
+  # Leave null to run on every yaml found.
+  subset_file: null
+
+output:
+  # Where per-record outputs will be written (one subdir per record_id).
+  out_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/hidden_reps
+
+  # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
+  staging_dir: null
+
+# Boltz inference parameters — passed straight through to extract_hidden_reps.py.
+boltz:
+  cache: /n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/boltz_db
+  recycling_steps: 3
+  sampling_steps: 200
+  diffusion_samples: 1
+  step_scale: 1.5
+  seed: null
+  no_kernels: false
+
+# Which hidden representations to capture.
+#   sites       — top-level sites: list of names, or "all"
+#   layers      — pairformer layer indices: list of ints, or "all"
+#   layer_sites — per-layer sites: list of names, or "all"
+#   save_all_recycling_steps — true: save every recycling step
+#                              false: save only the final step
+#
+# Valid `sites` (see Boltz2Extractor.SITES):
+#   input_embedder, pairformer_s, pairformer_z, distogram
+#
+# Valid `layer_sites` (see Boltz2Extractor.LAYER_SITES):
+#   layer_s, layer_z, attention, attention_weights,
+#   tri_mul_out, tri_mul_in, tri_att_start, tri_att_end,
+#   transition_s, transition_z
+extraction:
+  sites: [pairformer_s, pairformer_z]
+  layers: all
+  layer_sites: [layer_s, layer_z]
+  save_all_recycling_steps: true
+
+# Local parallelism: yamls are split into `num_gpus` chunks and one process
+# is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.
+runtime:
+  num_gpus: 1
+  accelerator: gpu       # gpu | cpu
+  num_workers: 2         # Boltz dataloader workers per process
+  python: python         # interpreter used for the subprocesses
+  # Optional extra env vars to inject into every subprocess.
+  env:
+    CUEQ_DEFAULT_CONFIG: "1"
+    CUEQ_DISABLE_AOT_TUNING: "1"
