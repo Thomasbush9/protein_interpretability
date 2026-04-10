@@ -19,7 +19,8 @@
 input:
   # Directory containing per-sequence subdirs (yamls discovered via rglob '*.yaml').
   # A flat directory of yamls also works.
-  sequences_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/sequences
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/protforge/test_10
+  #sequences_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/sequences
 
   # Optional: only run on yamls whose stem matches one of the lines in this file.
   # Leave null to run on every yaml found.
@@ -27,7 +28,8 @@ input:
 
 output:
   # Where per-record outputs will be written (one subdir per record_id).
-  out_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/hidden_reps
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/hidden_reps 
+  #out_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/hidden_reps
 
   # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
   staging_dir: null
@@ -35,10 +37,10 @@ output:
 # Boltz inference parameters — passed straight through to extract_hidden_reps.py.
 boltz:
   cache: /n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/boltz_db
-  recycling_steps: 3
+  recycling_steps: 10
   sampling_steps: 200
-  diffusion_samples: 1
-  step_scale: 1.5
+  diffusion_samples: 25
+  step_scale: 1.638
   seed: null
   no_kernels: false
 
@@ -59,10 +61,10 @@ boltz:
 #   tri_mul_out, tri_mul_in, tri_att_start, tri_att_end,
 #   transition_s, transition_z
 extraction:
-  sites: [pairformer_s, pairformer_z]
+  sites: [input_embedder, pairformer_s]
   layers: all
-  layer_sites: [layer_s, layer_z]
-  recycling_steps_to_save: last
+  layer_sites: [layer_s]
+  recycling_steps_to_save: all
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
 # is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.
