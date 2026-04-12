@@ -183,6 +183,8 @@ def build_command(
         cmd += ["--seed", str(boltz["seed"])]
     if boltz.get("no_kernels"):
         cmd += ["--no_kernels"]
+    if extraction.get("write_structures", False):
+        cmd += ["--write_structures"]
     return cmd
 
 

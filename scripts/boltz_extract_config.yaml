@@ -65,6 +65,7 @@ extraction:
   layers: all
   layer_sites: [layer_s]
   recycling_steps_to_save: all
+  write_structures: true         # write predicted structures as .cif files
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
 # is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.

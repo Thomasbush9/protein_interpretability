@@ -24,15 +24,17 @@ import gc
 import json
 import os
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
+import numpy as np
 import torch
 from pytorch_lightning import seed_everything
 from rdkit import Chem
 
 from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
-from boltz.data.types import Manifest
+from boltz.data.types import Coords, Interface, Manifest, StructureV2
+from boltz.data.write.mmcif import to_mmcif
 from boltz.main import (
     Boltz2DiffusionParams,
     BoltzProcessedInput,
@@ -107,6 +109,11 @@ def parse_args():
     )
     p.add_argument("--no_kernels", action="store_true")
     p.add_argument("--num_workers", type=int, default=2)
+    p.add_argument(
+        "--write_structures",
+        action="store_true",
+        help="Write predicted structures as .cif files (one per diffusion sample).",
+    )
     return p.parse_args()
 
 
@@ -123,6 +130,68 @@ def _parse_list_arg(value: str, valid: tuple[str, ...]) -> list[str] | None:
 
 def _tensor_size_mb(t: torch.Tensor) -> float:
     return t.nelement() * t.element_size() / (1024 * 1024)
+
+
+def _write_structures(
+    record,
+    output: dict,
+    batch: dict,
+    targets_dir: Path,
+    record_dir: Path,
+) -> list[Path]:
+    """Write predicted structures as CIF files, mirroring Boltz's BoltzWriter."""
+    structure = StructureV2.load(targets_dir / f"{record.id}.npz")
+
+    chain_map = {}
+    for i, mask in enumerate(structure.mask):
+        if mask:
+            chain_map[len(chain_map)] = i
+    structure = structure.remove_invalid_chains()
+
+    coords = output["sample_atom_coords"].detach().cpu()  # (n_samples, n_atoms, 3)
+    pad_mask = batch["atom_pad_mask"][0].cpu()
+    plddts_all = output.get("plddt")
+
+    # Rank samples by confidence if available
+    if "confidence_score" in output:
+        argsort = torch.argsort(output["confidence_score"], descending=True)
+        idx_to_rank = {idx.item(): rank for rank, idx in enumerate(argsort)}
+    else:
+        idx_to_rank = {i: i for i in range(coords.shape[0])}
+
+    written = []
+    for model_idx in range(coords.shape[0]):
+        coord_unpad = coords[model_idx][pad_mask.bool()].numpy()
+
+        atoms = structure.atoms
+        atoms["coords"] = coord_unpad
+        atoms["is_present"] = True
+
+        coord_structured = np.array([(x,) for x in coord_unpad], dtype=Coords)
+
+        residues = structure.residues
+        residues["is_present"] = True
+
+        new_structure = replace(
+            structure,
+            atoms=atoms,
+            residues=residues,
+            interfaces=np.array([], dtype=Interface),
+            coords=coord_structured,
+        )
+
+        plddts = None
+        if plddts_all is not None:
+            plddts = plddts_all[model_idx]
+
+        rank = idx_to_rank[model_idx]
+        outname = f"{record.id}_model_{rank}"
+        path = record_dir / f"{outname}.cif"
+        with path.open("w") as f:
+            f.write(to_mmcif(new_structure, plddts=plddts, boltz2=True))
+        written.append(path)
+
+    return written
 
 
 def main():
@@ -318,6 +387,18 @@ def main():
         model_out_path = record_dir / "model_outputs.pt"
         torch.save(model_outputs, model_out_path)
         model_out_size = model_out_path.stat().st_size / (1024 * 1024)
+
+        # ---- Write structure files ----
+        if args.write_structures:
+            record = batch["record"][0]
+            cif_paths = _write_structures(
+                record=record,
+                output=output,
+                batch=batch,
+                targets_dir=processed.targets_dir,
+                record_dir=record_dir,
+            )
+            print(f"  wrote {len(cif_paths)} structure(s): {[p.name for p in cif_paths]}")
 
         # ---- Save hidden reps ----
         n_steps = len(extractor.activations)
