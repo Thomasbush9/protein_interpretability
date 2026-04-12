@@ -20,9 +20,6 @@ esm = [
     "esm",
     "huggingface_hub",
 ]
-boltz = [
-    "boltz",
-]
 
 [dependency-groups]
 dev = [

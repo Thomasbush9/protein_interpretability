@@ -11,16 +11,15 @@ Requires Python 3.12+.
 # Core install (scoring, analysis)
 uv sync
 
-# With Boltz2 support
-uv sync --extra boltz
-
 # With ESM3 support
 uv sync --extra esm
 ```
 
 On a cluster where the Boltz conda env already exists, you can skip the install
 and set `PYTHONPATH` to point at `src/` instead (the orchestrator script does
-this automatically).
+this automatically). Boltz2 is intentionally not managed by this project's
+local `uv` environment because its dependency pins conflict with the core
+analysis stack; use the dedicated cluster environment for Boltz runs.
 
 ## Boltz2 Hidden Representation Extraction
 
