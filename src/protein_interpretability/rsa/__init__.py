@@ -36,6 +36,7 @@ Quick start
 from protein_interpretability.rsa.batch import (
     compute_divergence,
     discover_mutant_dirs,
+    load_mutation_map,
 )
 from protein_interpretability.rsa.comparison import (
     cross_layer_cka,
@@ -90,6 +91,7 @@ __all__ = [
     # batch
     "compute_divergence",
     "discover_mutant_dirs",
+    "load_mutation_map",
     # comparison
     "layerwise_rsa",
     "layerwise_partial_rsa",
