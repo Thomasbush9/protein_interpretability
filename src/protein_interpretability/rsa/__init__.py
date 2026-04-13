@@ -35,6 +35,7 @@ Quick start
 
 from protein_interpretability.rsa.batch import (
     compute_divergence,
+    compute_spatial_divergence,
     discover_mutant_dirs,
     load_mutation_map,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "linear_cka",
     # batch
     "compute_divergence",
+    "compute_spatial_divergence",
     "discover_mutant_dirs",
     "load_mutation_map",
     # comparison

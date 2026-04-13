@@ -104,6 +104,122 @@ def _build_window_mask(
 
 
 # ---------------------------------------------------------------------------
+# Sliding-window spatial profile
+# ---------------------------------------------------------------------------
+
+def compute_spatial_divergence(
+    wt_reps_path: str | Path,
+    mutant_dirs: dict[str, list[Path]],
+    window: int = 20,
+    stride: int = 10,
+    trim_left: int = 0,
+    trim_right: int = 20,
+    model_type: str = "boltz2",
+    site: str = "layer_s",
+    metric: str = "cosine",
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """Per-window divergence profile along the sequence (position-agnostic).
+
+    For each mutant × layer × step, slides a window of size ``window``
+    with stride ``stride`` across residues ``[trim_left, N - trim_right)``
+    and reports the mean per-residue divergence inside each window.
+
+    Parameters
+    ----------
+    wt_reps_path, mutant_dirs, model_type, site, metric, device
+        Same as :func:`compute_divergence`.
+    window : int
+        Window size (residues).
+    stride : int
+        Stride between window starts.
+    trim_left : int
+        Residues to exclude at the N-terminus.
+    trim_right : int
+        Residues to exclude at the C-terminus.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``mutant_id``, ``class``, ``step``, ``layer``,
+        ``window_start``, ``window_end``, ``window_center``, ``div``.
+    """
+    residue_fn = _RESIDUE_METRICS.get(metric)
+    if residue_fn is None:
+        raise ValueError(
+            f"Unknown metric '{metric}'. Supported: {list(_RESIDUE_METRICS)}"
+        )
+
+    logger.info("Loading wildtype representations from %s", wt_reps_path)
+    wt_steps = load_all_steps(wt_reps_path, model_type, site, device)
+    logger.info(
+        "WT loaded: %d steps, %d layers per step",
+        len(wt_steps), len(next(iter(wt_steps.values()))),
+    )
+    logger.info(
+        "Sliding window: size=%d stride=%d trim=[%d, N-%d]",
+        window, stride, trim_left, trim_right,
+    )
+
+    records: list[dict] = []
+    total = sum(len(dirs) for dirs in mutant_dirs.values())
+    processed = 0
+
+    for cls_label, dirs in mutant_dirs.items():
+        for mut_dir in dirs:
+            mutant_id = mut_dir.name
+            reps_path = mut_dir / "hidden_reps.pt"
+            if not reps_path.exists():
+                logger.warning("Missing hidden_reps.pt in %s, skipping", mut_dir)
+                continue
+
+            mut_steps = load_all_steps(reps_path, model_type, site, device)
+            common_steps = sorted(set(wt_steps) & set(mut_steps))
+
+            for step_idx in common_steps:
+                wt_layers = wt_steps[step_idx]
+                mut_layers = mut_steps[step_idx]
+                layers = sorted(set(wt_layers) & set(mut_layers))
+
+                for layer_idx in layers:
+                    wt_t = wt_layers[layer_idx]
+                    mut_t = mut_layers[layer_idx]
+                    per_res = residue_fn(wt_t, mut_t)
+                    N = per_res.shape[0]
+
+                    # Clamp trimmed bounds to valid range
+                    lo = max(0, trim_left)
+                    hi = max(lo, N - trim_right)
+
+                    # Slide windows: start positions in [lo, hi - window]
+                    if hi - lo < window:
+                        continue
+
+                    for start in range(lo, hi - window + 1, stride):
+                        end = start + window
+                        win_div = per_res[start:end].mean().item()
+                        records.append({
+                            "mutant_id": mutant_id,
+                            "class": cls_label,
+                            "step": step_idx,
+                            "layer": layer_idx,
+                            "window_start": start,
+                            "window_end": end,
+                            "window_center": (start + end) // 2,
+                            "div": win_div,
+                        })
+
+            del mut_steps
+            processed += 1
+            if processed % 20 == 0 or processed == total:
+                logger.info("Processed %d/%d mutants", processed, total)
+
+    df = pd.DataFrame(records)
+    logger.info("Done. DataFrame shape: %s", df.shape)
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
