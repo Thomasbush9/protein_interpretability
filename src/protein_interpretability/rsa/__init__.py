@@ -33,6 +33,10 @@ Quick start
     perturb   = perturbation_profile(wt["layer_reps"], mut["layer_reps"])
 """
 
+from protein_interpretability.rsa.batch import (
+    compute_divergence,
+    discover_mutant_dirs,
+)
 from protein_interpretability.rsa.comparison import (
     cross_layer_cka,
     layerwise_partial_rsa,
@@ -42,6 +46,7 @@ from protein_interpretability.rsa.comparison import (
     rsa_divergence,
 )
 from protein_interpretability.rsa.loader import (
+    load_all_steps,
     load_distance_matrix,
     load_model_outputs,
     load_representations,
@@ -65,6 +70,7 @@ from protein_interpretability.rsa.metrics import (
 __all__ = [
     # loader
     "load_representations",
+    "load_all_steps",
     "load_distance_matrix",
     "load_model_outputs",
     "seq_sep_matrix",
@@ -81,6 +87,9 @@ __all__ = [
     "rsa",
     "partial_rsa",
     "linear_cka",
+    # batch
+    "compute_divergence",
+    "discover_mutant_dirs",
     # comparison
     "layerwise_rsa",
     "layerwise_partial_rsa",

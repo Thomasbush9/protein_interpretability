@@ -36,6 +36,7 @@ def load_representations(
     model_type: str = "boltz2",
     site: str = "layer_s",
     device: torch.device | str = "cpu",
+    step: int | str | None = None,
 ) -> dict:
     """Load per-layer representations into a standardised format.
 
@@ -51,11 +52,20 @@ def load_representations(
         or ``"attn"``.
     device : torch.device | str
         Target device for loaded tensors.
+    step : int | str | None
+        Recycling step selection for multi-step files.
+
+        - ``None`` (default): auto-detect. If multi-step, use the last step.
+          Backward compatible with flat files.
+        - ``int``: index into ``data[f"step_{step}"]``.
+        - ``"all"``: return ``dict[int, standard_result]`` keyed by step index.
 
     Returns
     -------
     dict
         ``{"layer_reps": {int: Tensor}, "n_tokens": int, "model_type": str}``
+        When ``step="all"``, returns ``dict[int, dict]`` mapping each step
+        index to the standard result dict.
     """
     data = torch.load(path, map_location=device, weights_only=True)
 
@@ -65,7 +75,66 @@ def load_representations(
             f"Unknown model_type '{model_type}'. Supported: {list(_PARSERS)}"
         )
 
-    return parser(data, site, model_type)
+    # Detect multi-step structure (top-level keys like "step_0", "step_1", …)
+    is_multistep = (
+        isinstance(data, dict)
+        and all(isinstance(k, str) and k.startswith("step_") for k in data)
+        and len(data) > 0
+    )
+
+    if not is_multistep:
+        # Flat file — ignore step parameter (backward compatible)
+        if step == "all":
+            return {0: parser(data, site, model_type)}
+        return parser(data, site, model_type)
+
+    # --- Multi-step dispatch ---
+    step_keys = sorted(data.keys(), key=lambda k: int(k.split("_", 1)[1]))
+
+    if step == "all":
+        return {
+            int(k.split("_", 1)[1]): parser(data[k], site, model_type)
+            for k in step_keys
+        }
+
+    if step is None:
+        # Default: use the last step
+        chosen = step_keys[-1]
+    else:
+        chosen = f"step_{step}"
+        if chosen not in data:
+            available = [int(k.split("_", 1)[1]) for k in step_keys]
+            raise KeyError(
+                f"Step {step} not found. Available steps: {available}"
+            )
+
+    return parser(data[chosen], site, model_type)
+
+
+def load_all_steps(
+    path: str | Path,
+    model_type: str = "boltz2",
+    site: str = "layer_s",
+    device: torch.device | str = "cpu",
+) -> dict[int, dict[int, Tensor]]:
+    """Load all recycling steps as layer-rep dicts.
+
+    Convenience wrapper around ``load_representations(..., step="all")``.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to a multi-step ``hidden_reps.pt``.
+    model_type, site, device
+        Forwarded to :func:`load_representations`.
+
+    Returns
+    -------
+    dict[int, dict[int, Tensor]]
+        ``{step_idx: {layer_idx: Tensor(N, D)}}``
+    """
+    all_results = load_representations(path, model_type, site, device, step="all")
+    return {step: result["layer_reps"] for step, result in all_results.items()}
 
 
 def _parse_boltz2(data: dict, site: str, model_type: str) -> dict:
