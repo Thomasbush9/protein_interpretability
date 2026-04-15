@@ -198,14 +198,24 @@ def main() -> None:
             mutated_seq = apply_tokens(seq, extra)
             combined = sorted(orig_tokens + extra, key=lambda t: parse_token(t)[2])
 
-            # Write augmented FASTA (preserve original filename)
+            # Write augmented FASTA (preserve original filename + short header).
+            # Mutation summary goes to a sidecar .txt — long headers break
+            # downstream pipelines that derive filenames from the header.
             out_fa = args.out_dir / fa_path.name
+            seq_name = f"seq_{idx:05d}"
             with open(out_fa, "w") as ff:
-                ff.write(
-                    f">seq_{idx:05d}_aug | orig={':'.join(orig_tokens)} | "
-                    f"extra={':'.join(extra)}\n"
-                )
+                ff.write(f">{seq_name}\n")
                 ff.write(mutated_seq + "\n")
+
+            out_txt = args.out_dir / f"{seq_name}.txt"
+            with open(out_txt, "w") as tx:
+                tx.write(f"name\t{seq_name}\n")
+                tx.write(f"orig\t{':'.join(orig_tokens)}\n")
+                tx.write(f"extra\t{':'.join(extra)}\n")
+                tx.write(f"combined\t{':'.join(combined)}\n")
+                tx.write(f"n_orig\t{len(orig_tokens)}\n")
+                tx.write(f"n_extra\t{len(extra)}\n")
+                tx.write(f"length\t{L}\n")
 
             tf.write(
                 f"{idx}\t{':'.join(orig_tokens)}\t{':'.join(extra)}\t"
