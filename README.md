@@ -286,6 +286,38 @@ rmsd = path_rmsd("wildtype.cif", "mutant.cif")
 Supports both PDB and mmCIF formats. For multi-chain structures, pass
 `chain_id` explicitly.
 
+### Batch scoring a directory of predictions
+
+Use `score_sequences` to score every `.cif` under a results directory
+against a single reference and write the results to CSV:
+
+```bash
+python -m protein_interpretability.score_sequences \
+    --ref /path/to/reference.cif \
+    --predicted-dir /path/to/results \
+    --output-dir /path/to/output \
+    --output-name structure_scores.csv \
+    --normalize-by reference
+    # --chain-id A        # optional, for multi-chain structures
+```
+
+The script searches `--predicted-dir` recursively (`rglob("*.cif")`), so
+Boltz2 output layouts like `results/seq_00132/predictions/seq_00132_model_0.cif`
+are picked up automatically. Each filename must contain a `seq_<N>` token
+so the sequence index can be parsed.
+
+`--normalize-by` controls which structure length normalizes the TM-score
+(`reference` or `predicted`); RMSD is length-independent.
+
+The output CSV has columns:
+
+| Column | Description |
+|--------|-------------|
+| `sequence_idx` | integer parsed from `seq_<N>` in the filename |
+| `predicted_path` | absolute path to the scored `.cif` |
+| `tm_score` | TM-score vs. reference |
+| `rmsd` | C-alpha RMSD vs. reference |
+
 ## Tests
 
 ```bash
