@@ -203,8 +203,9 @@ def main() -> None:
             # downstream pipelines that derive filenames from the header.
             out_fa = args.out_dir / fa_path.name
             seq_name = f"seq_{idx:05d}"
+            fasta_header = f"{idx}|protein|"
             with open(out_fa, "w") as ff:
-                ff.write(f">{seq_name}\n")
+                ff.write(f">{fasta_header}\n")
                 ff.write(mutated_seq + "\n")
 
             out_txt = args.out_dir / f"{seq_name}.txt"
