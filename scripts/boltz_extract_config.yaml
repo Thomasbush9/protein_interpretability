@@ -19,7 +19,7 @@
 input:
   # Directory containing per-sequence subdirs (yamls discovered via rglob '*.yaml').
   # A flat directory of yamls also works.
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/high_effect/sequences 
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p20/outputs/sequences 
   #sequences_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/sequences
 
   # Optional: only run on yamls whose stem matches one of the lines in this file.
@@ -28,7 +28,7 @@ input:
 
 output:
   # Where per-record outputs will be written (one subdir per record_id).
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/high_effect/hidden_reps 
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p20/hidden_reps 
   #out_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/hidden_reps
 
   # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
