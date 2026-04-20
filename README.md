@@ -21,6 +21,84 @@ this automatically). Boltz2 is intentionally not managed by this project's
 local `uv` environment because its dependency pins conflict with the core
 analysis stack; use the dedicated cluster environment for Boltz runs.
 
+## Perturbation Generation
+
+Scripts for building mutation study sets from the Sarkisyan avGFP TSV and for
+adding controlled random perturbations on top of existing mutants. Outputs are
+`seq_XXXXX.fasta` files compatible with the Boltz2 / ESM extraction pipelines.
+
+### 1. Sample a study set — `scripts/sample_mutations.sh`
+
+Draws `N` high-effect and `N` neutral rows (single- and multi-mutation) from
+the brightness TSV, writes `selected.tsv` per group, and copies the matching
+`seq_${idx}.fasta` files from `FASTA_DIR`.
+
+```bash
+FASTA_DIR=/path/to/all_fastas \
+OUT_DIR=./study_set \
+bash scripts/sample_mutations.sh \
+    --n 100 --high-max 2.8 --neutral-min 3.7 --max-per-mut 5 --seed 42
+```
+
+Produces `study_set/{single_mut,multi_mut}/{high_effect,neutral}/` each with
+`selected.tsv` + per-sequence FASTAs, plus `sampling_summary.json`.
+
+### 2a. Add random perturbations to a FASTA dir — `scripts/augment_fasta_random.py`
+
+Takes an existing mutant FASTA directory (e.g. `multi_mut/high_effect/` from
+step 1) and adds `proportion * L` extra random substitutions per sequence at
+positions **not** already mutated. Same filenames, new directory.
+
+```bash
+python scripts/augment_fasta_random.py \
+    --in-dir  ./study_set/multi_mut/high_effect \
+    --tsv     ./study_set/multi_mut/high_effect/selected.tsv \
+    --proportion 0.20 \
+    --out-dir ./study_set/multi_mut/high_effect_p20 \
+    --seed 42
+```
+
+Run once per perturbation level (e.g. `0.20`, `0.40`, `0.70` for the
+`p20/p40/p70` levels consumed by `analysis_perturbation.ipynb`). Writes an
+`augmented.tsv` whose `extra_mutations` column is compatible with
+`compute_divergence.py`.
+
+### 2b. Random perturbations from a single FASTA — `scripts/augment_single_fasta_random.py`
+
+No TSV, no prior mutation annotation — just a single input FASTA (e.g. WT).
+Generates `--n` copies, each with `proportion * L` random substitutions
+drawn uniformly across the full length. Output filenames (`seq_XXXXX.fasta`)
+and sidecar `.txt` files are created from scratch.
+
+```bash
+python scripts/augment_single_fasta_random.py \
+    --in-fasta /path/to/wt.fasta \
+    --n 50 \
+    --proportion 0.20 \
+    --out-dir ./wt_aug_p20 \
+    --seed 42
+```
+
+Writes `seq_00000.fasta` + `seq_00000.txt` (mutation log) per copy, plus
+`augmented.tsv` compatible with `compute_divergence.py`.
+
+### 2c. High-effect + random — `scripts/augment_high_effect.py`
+
+Self-contained variant: picks `--n` high-effect rows directly from the TSV and
+adds `--pct`% random extra mutations. Writes `augmented.tsv` and, if
+`--wt-fasta` is given, per-row `seq_<idx>_aug.fasta`.
+
+```bash
+python scripts/augment_high_effect.py \
+    --out-dir ./augmented \
+    --n 100 --high-max 2.8 --pct 5 \
+    --wt-fasta /path/to/avGFP_wt.fasta \
+    --seed 42
+```
+
+Use this when you want the perturbation step to also do the high-effect
+sampling (no prior `sample_mutations.sh` run needed).
+
 ## Boltz2 Hidden Representation Extraction
 
 ### Prerequisites
@@ -292,7 +370,7 @@ Use `score_sequences` to score every `.cif` or `.pdb` under a results directory
 against a single reference and write the results to CSV:
 
 ```bash
-python -m protein_interpretability.score_sequences \
+uv run python -m protein_interpretability.score_sequences \
     --ref /path/to/reference.cif \
     --predicted-dir /path/to/results \
     --model-subdir boltz \
@@ -308,6 +386,34 @@ are picked up automatically. If you pass `--model-subdir`, only files under that
 subdirectory are scored, which is useful for layouts like
 `seq_00132/boltz/*.cif` or `seq_00132/esmfold/*.pdb`. The sequence index can be
 parsed from either the filename or a parent directory like `seq_00132`.
+
+Examples:
+
+```bash
+# Score only Boltz predictions laid out like seq_00132/boltz/*.cif
+uv run python -m protein_interpretability.score_sequences \
+    --ref /path/to/reference.cif \
+    --predicted-dir /path/to/sequences \
+    --model-subdir boltz \
+    --output-dir /path/to/output \
+    --output-name boltz_structure_scores.csv \
+    --normalize-by reference
+```
+
+```bash
+# Score only ESMFold predictions laid out like seq_00132/esmfold/structure.pdb
+uv run python -m protein_interpretability.score_sequences \
+    --ref /path/to/reference.cif \
+    --predicted-dir /path/to/sequences \
+    --model-subdir esmfold \
+    --output-dir /path/to/output \
+    --output-name esmfold_structure_scores.csv \
+    --normalize-by reference
+```
+
+Use `--chain-id A` when scoring multichain structures. The CLI must be invoked
+with `-m protein_interpretability.score_sequences`; `python
+protein_interpretability.score_sequences` is not valid module syntax.
 
 `--normalize-by` controls which structure length normalizes the TM-score
 (`reference` or `predicted`); RMSD is length-independent.
