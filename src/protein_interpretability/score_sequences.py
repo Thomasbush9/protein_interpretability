@@ -8,12 +8,13 @@ from pathlib import Path
 from protein_interpretability.scoring import path_rmsd, path_tm_score
 
 SEQUENCE_INDEX_PATTERN = re.compile(r"seq_(\d+)")
+SUPPORTED_STRUCTURE_SUFFIXES = (".cif", ".pdb")
 
 
 def parse_args() -> ArgumentParser:
     parser = ArgumentParser(
         description=(
-            "Score all predicted .cif structures in a directory against a "
+            "Score all predicted .cif/.pdb structures in a directory against a "
             "reference structure and save TM-score/RMSD to CSV."
         )
     )
@@ -27,7 +28,7 @@ def parse_args() -> ArgumentParser:
         "--predicted-dir",
         type=Path,
         required=True,
-        help="Directory to search recursively for predicted .cif files.",
+        help="Directory to search recursively for predicted .cif/.pdb files.",
     )
     parser.add_argument(
         "--output-dir",
@@ -54,10 +55,13 @@ def parse_args() -> ArgumentParser:
     return parser
 
 
-def find_cif_files(predicted_dir: Path) -> list[Path]:
-    return sorted(
-        path for path in predicted_dir.rglob("*.cif") if path.is_file()
+def find_structure_files(predicted_dir: Path) -> list[Path]:
+    paths = (
+        path
+        for suffix in SUPPORTED_STRUCTURE_SUFFIXES
+        for path in predicted_dir.rglob(f"*{suffix}")
     )
+    return sorted(path for path in paths if path.is_file())
 
 
 def extract_sequence_idx(path: Path) -> int:
@@ -65,7 +69,8 @@ def extract_sequence_idx(path: Path) -> int:
     if match is None:
         raise ValueError(
             f"Could not parse sequence index from '{path.name}'. "
-            "Expected a name like 'seq_19851_model_24.cif'."
+            "Expected a name like 'seq_19851_model_24.cif' or "
+            "'seq_19851_model_24.pdb'."
         )
     return int(match.group(1))
 
@@ -124,10 +129,10 @@ def main() -> None:
             f"Predicted structure directory not found: {args.predicted_dir}"
         )
 
-    predicted_paths = find_cif_files(args.predicted_dir)
+    predicted_paths = find_structure_files(args.predicted_dir)
     if not predicted_paths:
         raise FileNotFoundError(
-            f"No .cif files were found under {args.predicted_dir}."
+            f"No .cif or .pdb files were found under {args.predicted_dir}."
         )
 
     output_path = args.output_dir / args.output_name

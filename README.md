@@ -288,7 +288,7 @@ Supports both PDB and mmCIF formats. For multi-chain structures, pass
 
 ### Batch scoring a directory of predictions
 
-Use `score_sequences` to score every `.cif` under a results directory
+Use `score_sequences` to score every `.cif` or `.pdb` under a results directory
 against a single reference and write the results to CSV:
 
 ```bash
@@ -301,7 +301,7 @@ python -m protein_interpretability.score_sequences \
     # --chain-id A        # optional, for multi-chain structures
 ```
 
-The script searches `--predicted-dir` recursively (`rglob("*.cif")`), so
+The script searches `--predicted-dir` recursively for `.cif` and `.pdb`, so
 Boltz2 output layouts like `results/seq_00132/predictions/seq_00132_model_0.cif`
 are picked up automatically. Each filename must contain a `seq_<N>` token
 so the sequence index can be parsed.
@@ -314,7 +314,7 @@ The output CSV has columns:
 | Column | Description |
 |--------|-------------|
 | `sequence_idx` | integer parsed from `seq_<N>` in the filename |
-| `predicted_path` | absolute path to the scored `.cif` |
+| `predicted_path` | absolute path to the scored `.cif` or `.pdb` |
 | `tm_score` | TM-score vs. reference |
 | `rmsd` | C-alpha RMSD vs. reference |
 
