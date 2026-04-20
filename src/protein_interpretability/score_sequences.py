@@ -31,6 +31,14 @@ def parse_args() -> ArgumentParser:
         help="Directory to search recursively for predicted .cif/.pdb files.",
     )
     parser.add_argument(
+        "--model-subdir",
+        default=None,
+        help=(
+            "Optional model subdirectory to restrict matches to, such as "
+            "'boltz' or 'esmfold'."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         required=True,
@@ -55,24 +63,35 @@ def parse_args() -> ArgumentParser:
     return parser
 
 
-def find_structure_files(predicted_dir: Path) -> list[Path]:
+def find_structure_files(
+    predicted_dir: Path, model_subdir: str | None = None
+) -> list[Path]:
     paths = (
         path
         for suffix in SUPPORTED_STRUCTURE_SUFFIXES
         for path in predicted_dir.rglob(f"*{suffix}")
     )
+    if model_subdir is not None:
+        paths = (
+            path
+            for path in paths
+            if any(part == model_subdir for part in path.relative_to(predicted_dir).parts)
+        )
     return sorted(path for path in paths if path.is_file())
 
 
 def extract_sequence_idx(path: Path) -> int:
-    match = SEQUENCE_INDEX_PATTERN.search(path.stem)
-    if match is None:
-        raise ValueError(
-            f"Could not parse sequence index from '{path.name}'. "
-            "Expected a name like 'seq_19851_model_24.cif' or "
-            "'seq_19851_model_24.pdb'."
-        )
-    return int(match.group(1))
+    candidates = (path.stem, *path.parts)
+    for candidate in candidates:
+        match = SEQUENCE_INDEX_PATTERN.search(candidate)
+        if match is not None:
+            return int(match.group(1))
+
+    raise ValueError(
+        f"Could not parse sequence index from '{path}'. "
+        "Expected a name like 'seq_19851_model_24.cif' or "
+        "a parent directory like 'seq_19851/esmfold/structure.pdb'."
+    )
 
 
 def score_predictions(
@@ -129,10 +148,18 @@ def main() -> None:
             f"Predicted structure directory not found: {args.predicted_dir}"
         )
 
-    predicted_paths = find_structure_files(args.predicted_dir)
+    predicted_paths = find_structure_files(
+        args.predicted_dir, model_subdir=args.model_subdir
+    )
     if not predicted_paths:
+        model_detail = (
+            f" under model subdir '{args.model_subdir}'"
+            if args.model_subdir is not None
+            else ""
+        )
         raise FileNotFoundError(
-            f"No .cif or .pdb files were found under {args.predicted_dir}."
+            f"No .cif or .pdb files were found under {args.predicted_dir}"
+            f"{model_detail}."
         )
 
     output_path = args.output_dir / args.output_name

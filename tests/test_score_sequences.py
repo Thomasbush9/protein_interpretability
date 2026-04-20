@@ -44,6 +44,21 @@ def test_find_structure_files_includes_cif_and_pdb(tmp_path: Path) -> None:
     assert find_structure_files(tmp_path) == [pdb_path, cif_path]
 
 
+def test_find_structure_files_can_filter_by_model_subdir(tmp_path: Path) -> None:
+    boltz_dir = tmp_path / "seq_00002" / "boltz"
+    boltz_dir.mkdir(parents=True)
+    boltz_path = boltz_dir / "seq_00002_model_0.cif"
+    boltz_path.write_bytes(ASSET_STRUCTURE.read_bytes())
+
+    esmfold_dir = tmp_path / "seq_00001" / "esmfold"
+    esmfold_dir.mkdir(parents=True)
+    esmfold_path = esmfold_dir / "structure.pdb"
+    _write_pdb_from_asset(esmfold_path)
+
+    assert find_structure_files(tmp_path, model_subdir="esmfold") == [esmfold_path]
+    assert find_structure_files(tmp_path, model_subdir="boltz") == [boltz_path]
+
+
 def test_score_predictions_supports_mixed_prediction_formats(tmp_path: Path) -> None:
     cif_path = tmp_path / "seq_00010_model_0.cif"
     cif_path.write_bytes(ASSET_STRUCTURE.read_bytes())
@@ -69,6 +84,12 @@ def test_score_predictions_supports_mixed_prediction_formats(tmp_path: Path) -> 
     assert rows[1]["rmsd"] == pytest.approx(0.0, abs=1e-6)
 
 
+def test_extract_sequence_idx_uses_parent_directory_when_needed() -> None:
+    path = Path("seq_19851/esmfold/structure.pdb")
+
+    assert extract_sequence_idx(path) == 19851
+
+
 def test_extract_sequence_idx_mentions_supported_extensions() -> None:
     path = Path("model_0.pdb")
 
@@ -80,4 +101,4 @@ def test_extract_sequence_idx_mentions_supported_extensions() -> None:
         raise AssertionError("Expected extract_sequence_idx to raise ValueError")
 
     assert ".cif" in message
-    assert ".pdb" in message
+    assert "seq_19851/esmfold/structure.pdb" in message

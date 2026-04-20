@@ -295,6 +295,7 @@ against a single reference and write the results to CSV:
 python -m protein_interpretability.score_sequences \
     --ref /path/to/reference.cif \
     --predicted-dir /path/to/results \
+    --model-subdir boltz \
     --output-dir /path/to/output \
     --output-name structure_scores.csv \
     --normalize-by reference
@@ -303,8 +304,10 @@ python -m protein_interpretability.score_sequences \
 
 The script searches `--predicted-dir` recursively for `.cif` and `.pdb`, so
 Boltz2 output layouts like `results/seq_00132/predictions/seq_00132_model_0.cif`
-are picked up automatically. Each filename must contain a `seq_<N>` token
-so the sequence index can be parsed.
+are picked up automatically. If you pass `--model-subdir`, only files under that
+subdirectory are scored, which is useful for layouts like
+`seq_00132/boltz/*.cif` or `seq_00132/esmfold/*.pdb`. The sequence index can be
+parsed from either the filename or a parent directory like `seq_00132`.
 
 `--normalize-by` controls which structure length normalizes the TM-score
 (`reference` or `predicted`); RMSD is length-independent.
