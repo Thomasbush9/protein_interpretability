@@ -327,6 +327,85 @@ def main():
     print(f"  TEST 5: {'PASSED' if passed else 'FAILED'}")
 
     # ----------------------------------------------------------------
+    # Test 6: ESM2 sublayer hooks (attention out, attention weights, FFN)
+    # ----------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("TEST 6: ESM2 sublayer hooks (attention_out, attention_weights, ffn_out)")
+    print("=" * 70)
+
+    esm_sub_sites = ["esm_attention_out", "esm_attention_weights", "esm_ffn_out"]
+    test_esm_layers = [0, 1]  # just 2 layers to keep it fast
+
+    extractor6 = ESMFoldExtractor(
+        model,
+        sites=[],
+        trunk_layers=[],
+        esm_layers=test_esm_layers,
+        layer_sites=esm_sub_sites,
+    )
+
+    with extractor6:
+        with torch.no_grad():
+            output = model(input_ids, num_recycles=args.num_recycles)
+
+        first = extractor6.get_step(0)
+        print(f"  keys in first step: {sorted(first.keys())}")
+
+        passed = True
+        for i in test_esm_layers:
+            # Attention output
+            key = f"esm_{i}_attention_out"
+            if key in first:
+                shape = tuple(first[key].shape)
+                print(f"  {key}: shape={shape}")
+                assert shape[-1] == 2560, f"Expected hidden_size=2560, got {shape[-1]}"
+            else:
+                print(f"  WARNING: {key} not captured")
+                passed = False
+
+            # Attention weights
+            key = f"esm_{i}_attention_weights"
+            if key in first:
+                shape = tuple(first[key].shape)
+                print(f"  {key}: shape={shape}")
+                assert len(shape) == 4, f"Expected 4D tensor (B,H,L,L), got {len(shape)}D"
+                assert shape[1] == 40, f"Expected 40 attention heads, got {shape[1]}"
+                assert shape[2] == shape[3], f"Expected square attention matrix, got {shape[2]}x{shape[3]}"
+            else:
+                print(f"  WARNING: {key} not captured")
+                passed = False
+
+            # FFN output
+            key = f"esm_{i}_ffn_out"
+            if key in first:
+                shape = tuple(first[key].shape)
+                print(f"  {key}: shape={shape}")
+                assert shape[-1] == 2560, f"Expected hidden_size=2560, got {shape[-1]}"
+            else:
+                print(f"  WARNING: {key} not captured")
+                passed = False
+
+        # Verify monkey-patch is properly cleaned up after context manager exit
+        # (extractor6 already exited via `with` block)
+        extractor6_check = ESMFoldExtractor(
+            model, sites=[], trunk_layers=[], esm_layers=[0],
+            layer_sites=["esm_attention_weights"],
+        )
+        extractor6_check.install()
+        extractor6_check.clear()
+        with torch.no_grad():
+            model(input_ids, num_recycles=1)
+        check_first = extractor6_check.get_step(0)
+        if "esm_0_attention_weights" in check_first:
+            print("  monkey-patch re-install after remove: OK")
+        else:
+            print("  WARNING: monkey-patch re-install failed")
+            passed = False
+        extractor6_check.remove()
+
+        print(f"  TEST 6: {'PASSED' if passed else 'FAILED'}")
+
+    # ----------------------------------------------------------------
     # Summary
     # ----------------------------------------------------------------
     print("\n" + "=" * 70)

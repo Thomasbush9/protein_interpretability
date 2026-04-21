@@ -21,6 +21,9 @@ Usage::
 Submodule paths targeted (HF ``transformers.models.esm.modeling_esmfold``):
 
     model.esm.encoder.layer[i]                    # ESM2 transformer blocks
+    model.esm.encoder.layer[i].attention          # ESM2 attention sublayer output
+    model.esm.encoder.layer[i].attention.self     # ESM2 attention weights (monkey-patched)
+    model.esm.encoder.layer[i].output             # ESM2 FFN sublayer output
     model.trunk.blocks[i]                         # folding trunk blocks (48)
     model.trunk.blocks[i].{seq_attention,tri_mul_out,tri_mul_in,
                            tri_att_start,tri_att_end,mlp_seq,mlp_pair}
@@ -31,6 +34,7 @@ Submodule paths targeted (HF ``transformers.models.esm.modeling_esmfold``):
 from __future__ import annotations
 
 import contextlib
+from functools import wraps
 from typing import Any
 
 import torch
@@ -67,7 +71,10 @@ class ESMFoldExtractor:
         "transition_s",     # mlp_seq output
         "transition_z",     # mlp_pair output
         # ESM2 backbone (per-layer) — separate space from trunk
-        "esm_layer",        # ESM2 block hidden output (B, L, D_esm)
+        "esm_layer",            # ESM2 block hidden output (B, L, D_esm)
+        "esm_attention_out",    # ESM2 attention sublayer output (B, L, D_esm)
+        "esm_attention_weights",  # ESM2 post-softmax attention (B, H, L, L) — monkey-patched
+        "esm_ffn_out",          # ESM2 FFN sublayer output (B, L, D_esm)
     )
 
     TRUNK_SUBMODULE_MAP = {
@@ -113,6 +120,7 @@ class ESMFoldExtractor:
         self.to_cpu = to_cpu
 
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
+        self._patched: list[tuple[nn.Module, str, Any]] = []  # (module, attr, original)
         self._installed = False
         self._trunk_block_calls = 0  # counts calls to trunk.blocks[0] for recycling
         self.activations: list[dict[str, torch.Tensor]] = []
@@ -264,8 +272,12 @@ class ESMFoldExtractor:
                         submod.register_forward_hook(_make_sub_hook(prefix, site_name))
                     )
 
-        # --- Per-ESM2-layer hooks (backbone hidden states)
-        if "esm_layer" in self.layer_sites and hasattr(self.model, "esm"):
+        # --- Per-ESM2-layer hooks (backbone hidden states + sublayers)
+        esm_sites_requested = {
+            s for s in self.layer_sites
+            if s in ("esm_layer", "esm_attention_out", "esm_attention_weights", "esm_ffn_out")
+        }
+        if esm_sites_requested and hasattr(self.model, "esm"):
             esm_layers = self.model.esm.encoder.layer
             n_esm = len(esm_layers)
             esm_idx = (
@@ -279,16 +291,91 @@ class ESMFoldExtractor:
                     f"ESM2 layer indices {invalid} out of range (0..{n_esm - 1})"
                 )
             for i in esm_idx:
-                def _make_esm_hook(idx: int):
-                    def esm_hook(mod: nn.Module, inp: Any, output: Any) -> None:
-                        # EsmLayer returns (hidden_states, ...) tuple
-                        self._store(f"esm_{idx}_layer", self._tensor_from_out(output))
-                    return esm_hook
-                self._handles.append(
-                    esm_layers[i].register_forward_hook(_make_esm_hook(i))
-                )
+                layer_mod = esm_layers[i]
+
+                # Full layer output
+                if "esm_layer" in esm_sites_requested:
+                    def _make_esm_hook(idx: int):
+                        def esm_hook(mod: nn.Module, inp: Any, output: Any) -> None:
+                            self._store(f"esm_{idx}_layer", self._tensor_from_out(output))
+                        return esm_hook
+                    self._handles.append(
+                        layer_mod.register_forward_hook(_make_esm_hook(i))
+                    )
+
+                # Attention sublayer output (after output projection + residual)
+                if "esm_attention_out" in esm_sites_requested and hasattr(layer_mod, "attention"):
+                    def _make_attn_out_hook(idx: int):
+                        def attn_out_hook(mod: nn.Module, inp: Any, output: Any) -> None:
+                            # EsmAttention returns (attention_output, [attention_probs])
+                            self._store(f"esm_{idx}_attention_out", self._tensor_from_out(output))
+                        return attn_out_hook
+                    self._handles.append(
+                        layer_mod.attention.register_forward_hook(_make_attn_out_hook(i))
+                    )
+
+                # Post-softmax attention weights (monkey-patched)
+                if "esm_attention_weights" in esm_sites_requested and hasattr(layer_mod, "attention"):
+                    self._patch_esm_attention_weights(
+                        layer_mod.attention.self, f"esm_{i}_attention_weights"
+                    )
+
+                # FFN sublayer output (EsmOutput: projection + residual)
+                if "esm_ffn_out" in esm_sites_requested and hasattr(layer_mod, "output"):
+                    def _make_ffn_hook(idx: int):
+                        def ffn_hook(mod: nn.Module, inp: Any, output: Any) -> None:
+                            self._store(f"esm_{idx}_ffn_out", self._tensor_from_out(output))
+                        return ffn_hook
+                    self._handles.append(
+                        layer_mod.output.register_forward_hook(_make_ffn_hook(i))
+                    )
 
         self._installed = True
+
+    # ------------------------------------------------------------------
+    # Monkey-patching
+    # ------------------------------------------------------------------
+
+    def _patch_esm_attention_weights(self, attn_self_module: nn.Module, key: str) -> None:
+        """Monkey-patch ``EsmSelfAttention.forward`` to capture post-softmax weights.
+
+        Wraps the original forward so that ``output_attentions`` is forced True
+        internally.  The attention probabilities (post-softmax, pre-dropout in
+        eval mode) are captured, and the return value is adjusted back to the
+        original format so downstream code is unaffected.
+        """
+        original_forward = attn_self_module.forward
+        extractor = self
+
+        @wraps(original_forward)
+        def patched_forward(
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_value=None,
+            output_attentions=False,
+        ):
+            outputs = original_forward(
+                hidden_states,
+                attention_mask=attention_mask,
+                head_mask=head_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                past_key_value=past_key_value,
+                output_attentions=True,  # force on
+            )
+            # outputs = (context_layer, attention_probs, [past_kv])
+            extractor._store(key, outputs[1])
+
+            if output_attentions:
+                return outputs  # caller already expects attention_probs
+            # Strip attention_probs so the return shape matches the original
+            return (outputs[0],) + outputs[2:]
+
+        attn_self_module.forward = patched_forward
+        self._patched.append((attn_self_module, "forward", original_forward))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -298,6 +385,11 @@ class ESMFoldExtractor:
         for h in self._handles:
             h.remove()
         self._handles.clear()
+
+        for module, attr, original in self._patched:
+            setattr(module, attr, original)
+        self._patched.clear()
+
         self._installed = False
 
     def clear(self) -> None:
