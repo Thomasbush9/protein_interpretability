@@ -54,6 +54,8 @@ def format_list_arg(value) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, (list, tuple)):
+        if len(value) == 0:
+            return "none"
         return ",".join(str(x) for x in value)
     raise ValueError(f"Cannot parse list-style arg: {value!r}")
 

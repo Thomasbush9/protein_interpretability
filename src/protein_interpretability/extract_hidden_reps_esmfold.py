@@ -101,7 +101,9 @@ def parse_args():
 def _parse_list_arg(value: str, valid: tuple[str, ...]) -> list[str] | None:
     if value == "all":
         return None
-    items = [x.strip() for x in value.split(",")]
+    if value in ("none", ""):
+        return []
+    items = [x.strip() for x in value.split(",") if x.strip()]
     for item in items:
         if item not in valid:
             raise ValueError(f"Unknown site '{item}'. Valid: {valid}")
@@ -111,7 +113,9 @@ def _parse_list_arg(value: str, valid: tuple[str, ...]) -> list[str] | None:
 def _parse_int_list(value: str) -> list[int] | None:
     if value == "all":
         return None
-    return [int(x.strip()) for x in value.split(",")]
+    if value in ("none", ""):
+        return []
+    return [int(x.strip()) for x in value.split(",") if x.strip()]
 
 
 def _read_sequences(path: Path) -> list[tuple[str, str]]:
