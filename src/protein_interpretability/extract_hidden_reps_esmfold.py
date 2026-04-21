@@ -52,6 +52,13 @@ def parse_args():
         default="facebook/esmfold_v1",
         help="HuggingFace model id (default: facebook/esmfold_v1).",
     )
+    p.add_argument(
+        "--cache_dir",
+        type=str,
+        default=None,
+        help="HF cache root (e.g. /path/to/esm_models_cache). "
+             "Enables offline load via cache_dir/hub. Same pattern as ProtForge.",
+    )
     p.add_argument("--num_recycles", type=int, default=3)
     p.add_argument(
         "--chunk_size",
@@ -213,10 +220,17 @@ def main():
         "cuda" if args.accelerator == "gpu" and torch.cuda.is_available() else "cpu"
     )
 
-    print(f"Loading {args.model_name} ...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    # Load model — use cache_dir pattern (same as ProtForge) when provided,
+    # otherwise treat model_name as a direct HF id or local path.
+    hub_cache = str(Path(args.cache_dir).expanduser() / "hub") if args.cache_dir else None
+    offline = hub_cache is not None
+    print(f"Loading {args.model_name} (cache={hub_cache}, offline={offline}) ...")
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name, cache_dir=hub_cache, local_files_only=offline,
+    )
     model = EsmForProteinFolding.from_pretrained(
-        args.model_name, low_cpu_mem_usage=True
+        args.model_name, cache_dir=hub_cache, local_files_only=offline,
+        low_cpu_mem_usage=True,
     )
     model = model.to(device).eval()
     if args.fp16 and device.type == "cuda":

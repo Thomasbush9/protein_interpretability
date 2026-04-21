@@ -32,8 +32,11 @@ output:
 
 # ESMFold model parameters.
 model:
-  # HuggingFace model id or absolute path to a local checkout.
-  name: /n/holylfs06/LABS/bsabatini_lab/Everyone/esm_models_cache/hub/models--facebook--esmfold_v1
+  # HuggingFace model id — always "facebook/esmfold_v1".
+  name: facebook/esmfold_v1
+  # HF cache root. The model is loaded from <cache_dir>/hub/ with local_files_only=True.
+  # Same pattern as ProtForge's run_esmfold.py --cache_dir.
+  cache_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/esm_models_cache
   num_recycles: 4
   # Trunk chunk size for axial attention. Lower = less VRAM, slower.
   # Set to -1 to disable chunking entirely.

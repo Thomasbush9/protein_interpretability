@@ -153,6 +153,9 @@ def build_command(
         "--layer_sites", format_list_arg(extraction_cfg.get("layer_sites", "all")),
         "--recycling_steps_to_save", format_list_arg(recycling_save),
     ]
+    cache_dir = model_cfg.get("cache_dir")
+    if cache_dir:
+        cmd += ["--cache_dir", str(Path(cache_dir).expanduser())]
     if model_cfg.get("fp16"):
         cmd += ["--fp16"]
     max_length = runtime_cfg.get("max_length")
