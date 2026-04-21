@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Compare each ``seq_XXXXX/hidden_reps.pt`` in a directory to a reference.
 
-For a chosen recycling step, layer-type (``layer_z``, ``tri_att_start``,
-``tri_att_end``, ``layer_s``), and metric (``cosine``, ``l2``,
-``norm_diff``), writes one CSV per seq with per-layer summary stats.
+For a chosen recycling step, one or more layer-types (``layer_z``,
+``tri_att_start``, ``tri_att_end``, ``layer_s``), and metric (``cosine``,
+``l2``, ``norm_diff``), writes one CSV per (seq, layer-type) with
+per-layer summary stats.
 
 Usage
 -----
@@ -13,14 +14,15 @@ Usage
         --ref   /path/to/wt/hidden_reps.pt \\
         --mutants /path/to/p40/pairformer \\
         --step 0 \\
-        --layer-type layer_z \\
+        --layer-type layer_z tri_att_start \\
         --metric cosine \\
         --output /path/to/out_dir
 
 Output
 ------
-``<output>/seq_XXXXX.csv`` — columns: ``layer, mean, median, min, max,
-std, n_positions``. Aggregation across seqs is left to the caller.
+``<output>/seq_XXXXX__<layer_type>.csv`` — columns: ``layer, mean,
+median, min, max, std, n_positions``. Aggregation across seqs is left
+to the caller.
 """
 
 from __future__ import annotations
@@ -63,8 +65,8 @@ def main() -> None:
                     help="Directory containing seq_XXXXX/hidden_reps.pt subdirs.")
     ap.add_argument("--step", required=True, type=int,
                     help="Recycling step index (maps to step_<N> key).")
-    ap.add_argument("--layer-type", default="layer_z",
-                    help=f"Site/layer type (default: layer_z). "
+    ap.add_argument("--layer-type", nargs="+", default=["layer_z"],
+                    help=f"One or more site/layer types (default: layer_z). "
                          f"Pairwise: {PAIR_SITES}. Per-token: {TOKEN_SITES}.")
     ap.add_argument("--metric", default="cosine", choices=sorted(METRICS.keys()),
                     help="Per-position metric (default: cosine).")
@@ -90,22 +92,26 @@ def main() -> None:
     ref = load_reps(args.ref, device=args.device)
 
     print(f"[info] ref={args.ref}")
-    print(f"[info] step={args.step} layer_type={args.layer_type} metric={args.metric}")
-    print(f"[info] {len(seq_dirs)} seq dirs -> {args.output}")
+    print(f"[info] step={args.step} layer_types={args.layer_type} metric={args.metric}")
+    print(f"[info] {len(seq_dirs)} seq dirs x {len(args.layer_type)} layer_types "
+          f"-> {args.output}")
 
+    n_written = 0
     for i, d in enumerate(seq_dirs, 1):
         mut = load_reps(d / "hidden_reps.pt", device=args.device)
-        df = compare_reps(
-            ref, mut,
-            step=args.step,
-            layer_type=args.layer_type,
-            metric=args.metric,
-        )
-        df.to_csv(args.output / f"{d.name}.csv", index=False)
+        for lt in args.layer_type:
+            df = compare_reps(
+                ref, mut,
+                step=args.step,
+                layer_type=lt,
+                metric=args.metric,
+            )
+            df.to_csv(args.output / f"{d.name}__{lt}.csv", index=False)
+            n_written += 1
         if i % 10 == 0 or i == len(seq_dirs):
-            print(f"[done] {i}/{len(seq_dirs)}")
+            print(f"[done] {i}/{len(seq_dirs)} seqs")
 
-    print(f"[ok] wrote {len(seq_dirs)} CSVs to {args.output}")
+    print(f"[ok] wrote {n_written} CSVs to {args.output}")
 
 
 if __name__ == "__main__":
