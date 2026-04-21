@@ -17,14 +17,15 @@
 
 input:
   # Directory containing FASTA files (discovered via rglob '*.fasta').
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p20/outputs/sequences
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original
 
   # Optional: only process FASTAs whose stem matches a line in this file.
   subset_file: null
 
 output:
   # Where per-record outputs will be written (one subdir per record_id).
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p20/esmfold_hidden_reps
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original/hidden_reps/esmfold
+
 
   # Staging directory for symlink chunks. Defaults to <out_dir>/_staging.
   staging_dir: null
@@ -32,7 +33,7 @@ output:
 # ESMFold model parameters.
 model:
   # HuggingFace model id or absolute path to a local checkout.
-  name: /n/holylfs06/LABS/kempner_shared/Everyone/models/esmfold_v1
+  name: /n/holylfs06/LABS/bsabatini_lab/Everyone/esm_models_cache/hub/models--facebook--esmfold_v1
   num_recycles: 4
   # Trunk chunk size for axial attention. Lower = less VRAM, slower.
   # Set to -1 to disable chunking entirely.
@@ -72,14 +73,14 @@ model:
 #   esm_attention_weights        — ESM2 post-softmax attention (B,40,L,L) — monkey-patched
 #   esm_ffn_out                  — ESM2 FFN sublayer output
 extraction:
-  sites: [trunk_s]
-  trunk_layers: all
-  esm_layers: all
-  layer_sites: [layer_s, esm_layer]
+  sites: []
+  trunk_layers: [0, 11, 23, 35, 47]
+  esm_layers: []
+  layer_sites: [tri_att_start, tri_att_end, layer_z]
   # NOTE: esm_s_combined and esm_layer fire once before recycling and land
   # in step 0.  With "last", only the final recycling step is saved — those
   # sites won't be in the output.  Use "all" or "0,-1" to capture them.
-  recycling_steps_to_save: last
+  recycling_steps_to_save: "0,-1"
 
 # Runtime / parallelism settings.
 runtime:
