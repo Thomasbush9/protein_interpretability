@@ -17,15 +17,15 @@
 
 input:
   # Directory containing FASTA files (discovered via rglob '*.fasta').
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p40
+
 
   # Optional: only process FASTAs whose stem matches a line in this file.
   subset_file: null
 
 output:
   # Where per-record outputs will be written (one subdir per record_id).
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original/hidden_reps/esmfold
-
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p40/pairformer_esmfold
 
   # Staging directory for symlink chunks. Defaults to <out_dir>/_staging.
   staging_dir: null
@@ -87,7 +87,7 @@ extraction:
 
 # Runtime / parallelism settings.
 runtime:
-  num_gpus: 1
+  num_gpus: 2
   accelerator: gpu         # gpu | cpu
   python: python           # interpreter for subprocesses
   max_length: null          # skip sequences longer than this (memory safety)

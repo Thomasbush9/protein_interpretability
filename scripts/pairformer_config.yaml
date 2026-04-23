@@ -19,7 +19,7 @@
 input:
   # Directory containing per-sequence subdirs (yamls discovered via rglob '*.yaml').
   # A flat directory of yamls also works.
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p70/outputs/sequences 
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p40/outputs/sequences
   #sequences_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/sequences
 
   # Optional: only run on yamls whose stem matches one of the lines in this file.
@@ -28,7 +28,8 @@ input:
 
 output:
   # Where per-record outputs will be written (one subdir per record_id).
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p70/hidden_reps 
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p40/pairformer
+
   #out_dir: /n/netscratch/kempner_bsabatini_lab/Lab/Boltz-project/hidden_reps
 
   # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
@@ -61,11 +62,11 @@ boltz:
 #   tri_mul_out, tri_mul_in, tri_att_start, tri_att_end,
 #   transition_s, transition_z
 extraction:
-  sites: [input_embedder, pairformer_s]
-  layers: all
-  layer_sites: [layer_s]
-  recycling_steps_to_save: all
-  write_structures: true         # write predicted structures as .cif files
+  sites: [pairformer_z, distogram]
+  layers: [0, 11, 23, 35, 47, 55, 63]
+  layer_sites: [tri_att_start, tri_att_end, layer_z]
+  recycling_steps_to_save: "0,5,10"
+  write_structures: false         # write predicted structures as .cif files
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
 # is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.

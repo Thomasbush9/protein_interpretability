@@ -1,12 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=boltz_extract
 #SBATCH --nodes=1
+#SBATCH --partition=kempner_h100
+#SBATCH --account=kempner_bsabatini_lab
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=1
-#SBATCH --mem=64GB
+#SBATCH --mem=128GB
 #SBATCH --time=12:00:00
-#SBATCH --output=%x.%j.out
+#SBATCH --output=/n/home06/tbush/job_logs/%x.%A_%a.out
 
 # ===========================================================================
 # Boltz2 hidden-representation extraction (orchestrator version)
@@ -27,8 +29,8 @@
 set -euo pipefail
 
 # ---- Paths ----
-REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-CONFIG_PATH="${1:-$REPO_ROOT/scripts/boltz_extract_config.yaml}"
+REPO_ROOT="/n/home06/tbush/protein_interpretability"
+CONFIG_PATH="${1:-$REPO_ROOT/scripts/pairformer_config.yaml}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
     echo "ERROR: config not found: $CONFIG_PATH" >&2

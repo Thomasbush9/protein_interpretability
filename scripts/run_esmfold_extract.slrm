@@ -1,12 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=esmfold_extract
 #SBATCH --nodes=1
+#SBATCH --partition=kempner_h100
+#SBATCH --account=kempner_bsabatini_lab
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
-#SBATCH --gpus-per-node=1
-#SBATCH --mem=64GB
+#SBATCH --gpus-per-node=2
+#SBATCH --mem=128GB
 #SBATCH --time=12:00:00
-#SBATCH --output=%x.%j.out
+#SBATCH --output=/n/home06/tbush/job_logs/%x.%A_%a.out
 
 # ===========================================================================
 # ESMFold hidden-representation extraction (orchestrator version)
@@ -27,7 +29,7 @@
 set -euo pipefail
 
 # ---- Paths ----
-REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+REPO_ROOT="/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability"
 CONFIG_PATH="${1:-$REPO_ROOT/scripts/esmfold_extract_config.yaml}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -39,17 +41,18 @@ fi
 # ESMFold uses a different conda env than Boltz.  Adjust the path or create
 # a prepare_env_esmfold.sh if your cluster layout differs.  The env needs:
 #   transformers, torch, pyyaml, sentencepiece
-module load python/3.12.8-fasrc01 gcc/14.2.0-fasrc01 cuda/12.9.1-fasrc01 cudnn/9.10.2.21_cuda12-fasrc01
+module load python
 
 # mamba/conda init may not be sourced in batch shells — activate explicitly.
-eval "$(conda shell.bash hook)"
-mamba activate /n/holylfs06/LABS/kempner_shared/Everyone/common_envs/miniconda3/envs/esmfold
+#eval "$(conda shell.bash hook)"
+mamba activate /n/holylfs06/LABS/bsabatini_lab/Everyone/protforge/envs/esmfold
 
-export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
+
+#export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
 
 JOB_ID="${SLURM_JOB_ID:-manual}"
-export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_cache_${USER}_${JOB_ID}"
-mkdir -p "$TRITON_CACHE_DIR"
+#export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_cache_${USER}_${JOB_ID}"
+#mkdir -p "$TRITON_CACHE_DIR"
 
 echo "==============================================="
 echo "ESMFold Hidden Rep Extraction (orchestrator)"
@@ -57,8 +60,6 @@ echo "==============================================="
 echo "  Repo:       $REPO_ROOT"
 echo "  Config:     $CONFIG_PATH"
 echo "  GPUs:       ${SLURM_GPUS_ON_NODE:-?}"
-echo "  PYTHONPATH: $PYTHONPATH"
-echo "  Triton:     $TRITON_CACHE_DIR"
 echo "==============================================="
 
 python "$REPO_ROOT/scripts/run_esmfold_extract.py" --config "$CONFIG_PATH"
