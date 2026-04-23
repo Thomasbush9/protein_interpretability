@@ -127,25 +127,35 @@ def _parse_int_list(value: str) -> list[int] | None:
 
 def _read_sequences(path: Path) -> list[tuple[str, str]]:
     """Return list of (record_id, sequence). Supports FASTA, dir of FASTA, or
-    a plain text file with one sequence per line."""
+    a plain text file with one sequence per line.
+
+    Record IDs are derived from the **file stem** (not the FASTA header) so
+    that output directories match the input file names — same convention as
+    the Boltz extraction pipeline.  When a FASTA contains multiple sequences,
+    ``_0``, ``_1``, … suffixes are appended.
+    """
     records: list[tuple[str, str]] = []
 
     def _parse_fasta(fp: Path) -> list[tuple[str, str]]:
-        out, cur_id, cur_seq = [], None, []
+        stem = fp.stem
+        seqs: list[str] = []
+        cur_seq: list[str] = []
         for line in fp.read_text().splitlines():
             line = line.strip()
             if not line:
                 continue
             if line.startswith(">"):
-                if cur_id is not None:
-                    out.append((cur_id, "".join(cur_seq)))
-                cur_id = line[1:].split()[0] or fp.stem
+                if cur_seq:
+                    seqs.append("".join(cur_seq))
                 cur_seq = []
             else:
                 cur_seq.append(line)
-        if cur_id is not None:
-            out.append((cur_id, "".join(cur_seq)))
-        return out
+        if cur_seq:
+            seqs.append("".join(cur_seq))
+
+        if len(seqs) == 1:
+            return [(stem, seqs[0])]
+        return [(f"{stem}_{i}", s) for i, s in enumerate(seqs)]
 
     if path.is_dir():
         for fp in sorted(path.iterdir()):
