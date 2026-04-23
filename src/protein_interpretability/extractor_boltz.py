@@ -41,16 +41,18 @@ class Boltz2Extractor:
     )
 
     LAYER_SITES = (
-        "layer_s",           # per-layer sequence output (B, N, token_s)
-        "layer_z",           # per-layer pairwise output (B, N, N, token_z)
-        "attention",         # AttentionPairBias output on s
-        "attention_weights", # post-softmax attention matrix (B, H, N, N)
-        "tri_mul_out",       # TriangleMultiplicationOutgoing output
-        "tri_mul_in",        # TriangleMultiplicationIncoming output
-        "tri_att_start",     # TriangleAttentionStartingNode output
-        "tri_att_end",       # TriangleAttentionEndingNode output
-        "transition_s",      # sequence transition output
-        "transition_z",      # pairwise transition output
+        "layer_s",                # per-layer sequence output (B, N, token_s)
+        "layer_z",                # per-layer pairwise output (B, N, N, token_z)
+        "attention",              # AttentionPairBias output on s
+        "attention_weights",      # post-softmax attention matrix (B, H, N, N)
+        "tri_mul_out",            # TriangleMultiplicationOutgoing output
+        "tri_mul_in",             # TriangleMultiplicationIncoming output
+        "tri_att_start",          # TriangleAttentionStartingNode output (B, N, N, D)
+        "tri_att_end",            # TriangleAttentionEndingNode output (B, N, N, D)
+        "tri_att_start_weights",  # post-softmax weights (B, I, H, J, J) — forces eager path
+        "tri_att_end_weights",    # post-softmax weights (B, I, H, J, J) — forces eager path
+        "transition_s",           # sequence transition output
+        "transition_z",           # pairwise transition output
     )
 
     def __init__(
@@ -201,7 +203,7 @@ class Boltz2Extractor:
             if "attention_weights" in self.layer_sites and hasattr(layer, "attention"):
                 self._patch_attention_weights(layer.attention, f"{prefix}_attention_weights")
 
-            # Triangle and transition submodules
+            # Triangle and transition submodules (plain output hooks)
             _sub_map = {
                 "tri_mul_out": "tri_mul_out",
                 "tri_mul_in": "tri_mul_in",
@@ -219,6 +221,18 @@ class Boltz2Extractor:
                         self._store(f"{p}_{sn}", self._tensor_from_out(output))
 
                     self._handles.append(submod.register_forward_hook(sub_hook))
+
+            # Triangle attention weights (monkey-patch; forces eager softmax path)
+            _tri_weight_map = {
+                "tri_att_start_weights": "tri_att_start",
+                "tri_att_end_weights": "tri_att_end",
+            }
+            for site_name, attr_name in _tri_weight_map.items():
+                if site_name in self.layer_sites and hasattr(layer, attr_name):
+                    submod = getattr(layer, attr_name)
+                    self._patch_tri_attention_weights(
+                        submod, f"{prefix}_{site_name}"
+                    )
 
         self._installed = True
 
@@ -256,6 +270,67 @@ class Boltz2Extractor:
 
         module.forward = patched_forward
         self._patched.append((module, "forward", original_forward))
+
+    def _patch_tri_attention_weights(self, tri_module: nn.Module, key: str) -> None:
+        """Monkey-patch ``TriangleAttention.forward`` to capture post-softmax weights.
+
+        The fused CUDA kernels (``trifast`` / ``cuequivariance``) never
+        materialize the softmax matrix, so this replacement re-implements the
+        eager path — same math, same return value — with a ``_store`` call
+        slipped in between softmax and the final ``@ V``.
+
+        Captured tensor shape: ``(B, I, H, J, J)``. For ending-node attention
+        ``x`` is transposed first, so ``I`` indexes the original ``J`` axis.
+        """
+        from boltz.model.layers.triangular_attention.primitives import softmax_no_cast
+        from boltz.model.layers.triangular_attention.utils import permute_final_dims
+
+        original_forward = tri_module.forward
+        extractor = self
+
+        @wraps(original_forward)
+        def patched_forward(x, mask=None, chunk_size=None, use_kernels=False):
+            if mask is None:
+                mask = x.new_ones(x.shape[:-1])
+
+            if not tri_module.starting:
+                x = x.transpose(-2, -3)
+                mask = mask.transpose(-1, -2)
+
+            x = tri_module.layer_norm(x)
+
+            # [*, I, 1, 1, J]
+            mask = mask[..., :, None, None, :]
+            mask_bias = tri_module.inf * (mask - 1)
+
+            # [*, H, I, J] -> [*, 1, H, I, J]
+            tri_bias = permute_final_dims(tri_module.linear(x), (2, 0, 1))
+            tri_bias = tri_bias.unsqueeze(-4)
+
+            # Inline MHA eager path with weight capture
+            mha = tri_module.mha
+            q, k, v = mha._prep_qkv(x, x, apply_scale=True)
+            # q/k/v: [B, I, H, J, C_hidden]
+
+            key_t = permute_final_dims(k, (1, 0))   # [B, I, H, C_hidden, J]
+            a = torch.matmul(q, key_t)              # [B, I, H, J, J]
+            a = a + mask_bias
+            a = a + tri_bias
+            a = softmax_no_cast(a, -1)
+
+            extractor._store(key, a)
+
+            o = torch.matmul(a, v)                  # [B, I, H, J, C_hidden]
+            o = o.transpose(-2, -3)                 # [B, I, J, H, C_hidden]
+            o = mha._wrap_up(o, x)
+
+            if not tri_module.starting:
+                o = o.transpose(-2, -3)
+
+            return o
+
+        tri_module.forward = patched_forward
+        self._patched.append((tri_module, "forward", original_forward))
 
     # ------------------------------------------------------------------
     # Lifecycle

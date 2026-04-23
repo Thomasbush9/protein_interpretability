@@ -71,6 +71,19 @@ def parse_args():
         help="Average attention across heads before saving",
     )
     parser.add_argument(
+        "--layer_sites",
+        type=str,
+        default="attention_weights",
+        help=(
+            "Comma-separated weight sites to capture. Supported: "
+            "attention_weights (AttentionPairBias, (B,H,N,N)), "
+            "tri_att_start_weights / tri_att_end_weights "
+            "(TriangleAttention, (B,I,H,J,J) — forces eager path; "
+            "pair with --no_kernels for a fully consistent run). "
+            "Default: attention_weights."
+        ),
+    )
+    parser.add_argument(
         "--save_format",
         choices=["pt", "npz"],
         default="pt",
@@ -208,9 +221,28 @@ def main():
     if args.layers != "all":
         layer_indices = [int(x.strip()) for x in args.layers.split(",")]
 
+    # Parse & validate layer_sites (weight sites only)
+    _SUPPORTED = ("attention_weights", "tri_att_start_weights", "tri_att_end_weights")
+    layer_sites = [s.strip() for s in args.layer_sites.split(",") if s.strip()]
+    for s in layer_sites:
+        if s not in _SUPPORTED:
+            raise ValueError(
+                f"Unsupported layer_site {s!r}. Supported by this script: {_SUPPORTED}"
+            )
+    if not layer_sites:
+        raise ValueError("--layer_sites must include at least one site")
+
+    tri_sites_requested = any(s.startswith("tri_att_") for s in layer_sites)
+    if tri_sites_requested and not args.no_kernels:
+        print(
+            "[warn] tri_att_*_weights force the eager path on patched modules only; "
+            "other modules still use kernels unless you pass --no_kernels. "
+            "For a fully consistent run, add --no_kernels."
+        )
+
     # Install attention hooks via Boltz2Extractor
     extractor = Boltz2Extractor(
-        model, sites=[], layers=layer_indices, layer_sites=["attention_weights"],
+        model, sites=[], layers=layer_indices, layer_sites=layer_sites,
     )
     extractor.install()
 
@@ -251,13 +283,21 @@ def main():
         step = extractor.get_step(-1)
         attention = {}
         for k, v in step.items():
-            if "attention_weights" in k:
-                # Rename pairformer_0_attention_weights -> pairformer_layer_0
-                # for backward compat with existing .npz files and plot_attention.py
-                layer_name = k.replace("_attention_weights", "").replace(
-                    "pairformer_", "pairformer_layer_"
-                )
-                attention[layer_name] = v.mean(dim=1) if args.average_heads else v
+            # Pair attention (AttentionPairBias): (B, H, N, N), head dim = 1
+            # Triangle attention: (B, I, H, J, J), head dim = 2
+            if k.endswith("_attention_weights"):
+                head_dim = 1
+            elif k.endswith("_tri_att_start_weights") or k.endswith("_tri_att_end_weights"):
+                head_dim = 2
+            else:
+                continue
+            # Rename pairformer_0_* -> pairformer_layer_0_* (backward compat for
+            # pair weights: strips _attention_weights so key becomes pairformer_layer_0;
+            # triangle keys keep their _tri_att_*_weights suffix).
+            layer_name = k.replace("_attention_weights", "").replace(
+                "pairformer_", "pairformer_layer_"
+            )
+            attention[layer_name] = v.mean(dim=head_dim) if args.average_heads else v
 
         # Get record ID from the batch (set by Boltz's PredictionDataset)
         record_id = batch["record"][0].id
