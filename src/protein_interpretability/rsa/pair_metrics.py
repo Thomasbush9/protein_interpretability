@@ -31,8 +31,8 @@ TOKEN_SITES: tuple[str, ...] = ("layer_s",)
 # Key helpers
 # ---------------------------------------------------------------------------
 
-def _key(layer_n: int, layer_type: str) -> str:
-    return f"pairformer_{layer_n}_{layer_type}"
+def _key(layer_n: int, layer_type: str, prefix: str = "pairformer") -> str:
+    return f"{prefix}_{layer_n}_{layer_type}"
 
 
 def _step_key(step: int | str) -> str:
@@ -54,10 +54,15 @@ def load_reps(path: str | Path, device: str = "cpu") -> dict:
     return torch.load(path, map_location=device, weights_only=True)
 
 
-def get_layer_ids(reps: dict, step: int | str, layer_type: str = "layer_z") -> list[int]:
-    """Sorted pairformer layer indices present for a given step/site."""
+def get_layer_ids(
+    reps: dict,
+    step: int | str,
+    layer_type: str = "layer_z",
+    prefix: str = "pairformer",
+) -> list[int]:
+    """Sorted layer indices present for ``{prefix}_{L}_{layer_type}`` keys."""
     sub = _step_sub(reps, step)
-    pat = re.compile(rf"pairformer_(\d+)_{re.escape(layer_type)}$")
+    pat = re.compile(rf"{re.escape(prefix)}_(\d+)_{re.escape(layer_type)}$")
     return sorted({int(m.group(1)) for k in sub if (m := pat.match(str(k)))})
 
 
@@ -66,10 +71,11 @@ def get_tensor(
     step: int | str,
     layer_n: int,
     layer_type: str = "layer_z",
+    prefix: str = "pairformer",
 ) -> torch.Tensor:
     """Return the tensor for ``(step, layer_n, layer_type)`` with the batch dim squeezed."""
     sub = _step_sub(reps, step)
-    return sub[_key(layer_n, layer_type)].squeeze(0)
+    return sub[_key(layer_n, layer_type, prefix)].squeeze(0)
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +128,13 @@ def compare_reps(
     step: int | str,
     layer_type: str = "layer_z",
     metric: str = "cosine",
+    prefix: str = "pairformer",
 ) -> pd.DataFrame:
     """Per-layer summary stats of ``metric(ref, mut)`` at a chosen step/site.
+
+    Keys are matched as ``{prefix}_{L}_{layer_type}`` — use
+    ``prefix="pairformer"`` for Boltz2 and ``prefix="trunk"`` for ESMFold
+    (or any other prefix used by a new extractor).
 
     Returns a DataFrame with columns
     ``layer, mean, median, min, max, std, n_positions``.
@@ -133,22 +144,23 @@ def compare_reps(
     if fn is None:
         raise ValueError(f"Unknown metric {metric!r}. Supported: {sorted(METRICS)}")
 
-    ref_layers = set(get_layer_ids(ref, step, layer_type))
-    mut_layers = set(get_layer_ids(mut, step, layer_type))
+    ref_layers = set(get_layer_ids(ref, step, layer_type, prefix))
+    mut_layers = set(get_layer_ids(mut, step, layer_type, prefix))
     layers = sorted(ref_layers & mut_layers)
     if not layers:
         raise ValueError(
-            f"No overlapping layers for step={step} layer_type={layer_type!r}. "
+            f"No overlapping layers for step={step} prefix={prefix!r} "
+            f"layer_type={layer_type!r}. "
             f"ref={sorted(ref_layers)} mut={sorted(mut_layers)}"
         )
 
     rows: list[dict] = []
     for lid in layers:
-        r = get_tensor(ref, step, lid, layer_type)
-        m = get_tensor(mut, step, lid, layer_type)
+        r = get_tensor(ref, step, lid, layer_type, prefix)
+        m = get_tensor(mut, step, lid, layer_type, prefix)
         if r.shape != m.shape:
             raise ValueError(
-                f"Shape mismatch at layer {lid} ({layer_type}): "
+                f"Shape mismatch at layer {lid} ({prefix}_*_{layer_type}): "
                 f"ref {tuple(r.shape)} vs mut {tuple(m.shape)}"
             )
         rows.append({"layer": lid, **summarize(fn(r, m))})

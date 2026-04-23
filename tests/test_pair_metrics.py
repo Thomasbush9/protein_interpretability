@@ -26,6 +26,10 @@ def test_key_format():
     assert _key(0, "tri_att_start") == "pairformer_0_tri_att_start"
 
 
+def test_key_format_custom_prefix():
+    assert _key(3, "block", prefix="trunk") == "trunk_3_block"
+
+
 def test_step_key_accepts_int_and_str():
     assert _step_key(3) == "step_3"
     assert _step_key("step_2") == "step_2"
@@ -171,6 +175,30 @@ def test_compare_reps_shape_mismatch_raises():
     reps_b = _mk_multistep_reps(n_steps=1, n_layers=1, N=4, D=6)
     with pytest.raises(ValueError, match="Shape mismatch"):
         compare_reps(reps_a, reps_b, step=0, layer_type="layer_z", metric="cosine")
+
+
+def test_get_layer_ids_with_custom_prefix():
+    """ESMFold-style ``trunk_{L}_{site}`` keys should be discoverable."""
+    inner = {
+        "trunk_0_block": torch.randn(1, 4, 6),
+        "trunk_1_block": torch.randn(1, 4, 6),
+        "pairformer_0_layer_z": torch.randn(1, 4, 4, 6),  # wrong prefix, ignored
+    }
+    reps = {"step_0": inner}
+    assert get_layer_ids(reps, 0, "block", prefix="trunk") == [0, 1]
+    assert get_layer_ids(reps, 0, "block", prefix="pairformer") == []
+
+
+def test_compare_reps_with_custom_prefix():
+    """End-to-end with ``prefix='trunk'`` on synthetic ESMFold-shaped reps."""
+    inner = {
+        f"trunk_{L}_block": torch.randn(1, 5, 8) for L in range(3)
+    }
+    reps = {"step_0": inner}
+    df = compare_reps(reps, reps, step=0, layer_type="block",
+                      metric="cosine", prefix="trunk")
+    assert list(df["layer"]) == [0, 1, 2]
+    assert np.allclose(df["mean"], 1.0, atol=1e-6)
 
 
 def test_compare_reps_intersects_layers():

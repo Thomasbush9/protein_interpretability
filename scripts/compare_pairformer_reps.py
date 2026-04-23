@@ -70,6 +70,9 @@ def main() -> None:
                          f"Pairwise: {PAIR_SITES}. Per-token: {TOKEN_SITES}.")
     ap.add_argument("--metric", default="cosine", choices=sorted(METRICS.keys()),
                     help="Per-position metric (default: cosine).")
+    ap.add_argument("--prefix", default="pairformer",
+                    help="Key prefix before the layer index. "
+                         "Boltz2: 'pairformer' (default). ESMFold: 'trunk'.")
     ap.add_argument("--output", required=True, type=Path,
                     help="Output directory for per-seq CSVs.")
     ap.add_argument("--device", default="cpu", help="Torch device (default: cpu).")
@@ -92,7 +95,8 @@ def main() -> None:
     ref = load_reps(args.ref, device=args.device)
 
     print(f"[info] ref={args.ref}")
-    print(f"[info] step={args.step} layer_types={args.layer_type} metric={args.metric}")
+    print(f"[info] step={args.step} prefix={args.prefix} "
+          f"layer_types={args.layer_type} metric={args.metric}")
     print(f"[info] {len(seq_dirs)} seq dirs x {len(args.layer_type)} layer_types "
           f"-> {args.output}")
 
@@ -105,6 +109,7 @@ def main() -> None:
                 step=args.step,
                 layer_type=lt,
                 metric=args.metric,
+                prefix=args.prefix,
             )
             df.to_csv(args.output / f"{d.name}__{lt}.csv", index=False)
             n_written += 1
