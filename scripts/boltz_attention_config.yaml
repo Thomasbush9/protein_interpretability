@@ -1,0 +1,83 @@
+# Configuration for scripts/run_boltz_attention.py
+#
+# Runs Boltz2 attention-weight extraction over a directory of sequences
+# laid out as:
+#
+#     <sequences_dir>/
+#       seq_00132/
+#         msa/
+#         seq_00132.yaml
+#       seq_00318/
+#         ...
+#
+# Each yaml is symlinked into a per-GPU chunk directory and Boltz is launched
+# in parallel via `python -m protein_interpretability.extract_attention`.
+# MSAs referenced inside the yamls must use absolute paths, otherwise the
+# symlinks break MSA resolution.
+#
+# Output layout (one `boltz_results_<chunk>` per GPU under out_dir):
+#
+#     <out_dir>/
+#       boltz_results_chunk_0/
+#         attention/
+#           seq_00132_attention.pt
+#           ...
+#       boltz_results_chunk_1/
+#         attention/...
+#       _log_chunk_0.out
+#       _log_chunk_1.out
+
+input:
+  # Directory containing per-sequence subdirs or a flat dir of yamls
+  # (discovered recursively via rglob '*.yaml').
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p70/outputs/sequences
+
+  # Optional: only run on yamls whose stem matches one of the lines in this file.
+  # Leave null to run on every yaml found.
+  subset_file: null
+
+output:
+  # Where per-chunk outputs will be written.
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p70/attention
+
+  # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
+  staging_dir: null
+
+# Boltz inference parameters — passed straight through to extract_attention.py.
+boltz:
+  cache: /n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/boltz_db
+  recycling_steps: 10
+  sampling_steps: 200
+  diffusion_samples: 25
+  step_scale: 1.638
+  seed: null
+  # Disable fused CUDA kernels. REQUIRED for a fully consistent run when
+  # tri_att_*_weights are in `layer_sites` — the patched triangular forward
+  # is eager-only, while other modules (AttentionPairBias, tri_mul, ...)
+  # still use kernels unless this is true.
+  no_kernels: false
+
+# Which attention-weight sites to capture.
+#   layers      — pairformer layer indices: list of ints, or "all"
+#   layer_sites — which weight sites to capture. Supported:
+#                   attention_weights        (AttentionPairBias, (B,H,N,N))
+#                   tri_att_start_weights    (TriangleAttention,  (B,I,H,J,J))
+#                   tri_att_end_weights      (TriangleAttention,  (B,I,H,J,J))
+#   average_heads — if true, reduce head dim before saving.
+#   save_format   — pt | npz
+extraction:
+  layers: all
+  layer_sites: [attention_weights]
+  average_heads: false
+  save_format: pt
+
+# Local parallelism: yamls are split into `num_gpus` chunks and one process
+# is launched per GPU with CUDA_VISIBLE_DEVICES pinned to that device.
+runtime:
+  num_gpus: 1
+  accelerator: gpu
+  num_workers: 2
+  python: python
+  env:
+    CUEQ_DEFAULT_CONFIG: "1"
+    CUEQ_DISABLE_AOT_TUNING: "1"
