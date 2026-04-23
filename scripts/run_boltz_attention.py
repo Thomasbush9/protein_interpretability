@@ -171,6 +171,8 @@ def build_command(
         "--step_scale", str(boltz.get("step_scale", 1.5)),
         "--layers", format_list_arg(extraction.get("layers", "all")),
         "--layer_sites", ",".join(layer_sites),
+        "--recycling_steps_to_save",
+        format_list_arg(extraction.get("recycling_steps_to_save", "last")),
         "--save_format", extraction.get("save_format", "pt"),
         "--num_workers", str(runtime.get("num_workers", 2)),
     ]
@@ -317,6 +319,7 @@ def main() -> None:
     print(f"  recycling     : {boltz_cfg.get('recycling_steps')}")
     print(f"  layers        : {format_list_arg(extraction_cfg.get('layers', 'all'))}")
     print(f"  layer_sites   : {','.join(layer_sites)}")
+    print(f"  recycling_save: {format_list_arg(extraction_cfg.get('recycling_steps_to_save', 'last'))}")
     print(f"  average_heads : {extraction_cfg.get('average_heads', False)}")
     print(f"  save_format   : {extraction_cfg.get('save_format', 'pt')}")
     print(f"  no_kernels    : {bool(boltz_cfg.get('no_kernels'))}")

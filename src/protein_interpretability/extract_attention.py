@@ -84,6 +84,20 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--recycling_steps_to_save",
+        type=str,
+        default="last",
+        help=(
+            "Which recycling steps to save. "
+            "'last' = final step only (flat output, default), "
+            "'all' = every step, "
+            "'every:N' = every Nth step plus the last, "
+            "or comma-separated indices e.g. '0,2' (supports negative indexing). "
+            "For multi-step runs the output is nested as "
+            "{token_mask, step_<N>: {layer_name: tensor, ...}, ...}."
+        ),
+    )
+    parser.add_argument(
         "--save_format",
         choices=["pt", "npz"],
         default="pt",
@@ -279,58 +293,83 @@ def main():
             diffusion_samples=args.diffusion_samples,
         )
 
-        # Collect attention maps from the last recycling step
-        step = extractor.get_step(-1)
-        attention = {}
-        for k, v in step.items():
-            # Pair attention (AttentionPairBias): (B, H, N, N), head dim = 1
-            # Triangle attention: (B, I, H, J, J), head dim = 2
-            if k.endswith("_attention_weights"):
-                head_dim = 1
-            elif k.endswith("_tri_att_start_weights") or k.endswith("_tri_att_end_weights"):
-                head_dim = 2
-            else:
-                continue
-            # Rename pairformer_0_* -> pairformer_layer_0_* (backward compat for
-            # pair weights: strips _attention_weights so key becomes pairformer_layer_0;
-            # triangle keys keep their _tri_att_*_weights suffix).
-            layer_name = k.replace("_attention_weights", "").replace(
-                "pairformer_", "pairformer_layer_"
-            )
-            attention[layer_name] = v.mean(dim=head_dim) if args.average_heads else v
+        def _collect(step_dict: dict) -> dict:
+            """Filter + rename + optional head-avg for one recycling step."""
+            out: dict = {}
+            for k, v in step_dict.items():
+                # Pair attention (AttentionPairBias): (B, H, N, N) -> head dim 1
+                # Triangle attention: (B, I, H, J, J) -> head dim 2
+                if k.endswith("_attention_weights"):
+                    head_dim = 1
+                elif k.endswith("_tri_att_start_weights") or k.endswith("_tri_att_end_weights"):
+                    head_dim = 2
+                else:
+                    continue
+                # Strip _attention_weights for pair (backward compat with
+                # existing plots); triangle keys keep their suffix.
+                layer_name = k.replace("_attention_weights", "").replace(
+                    "pairformer_", "pairformer_layer_"
+                )
+                out[layer_name] = v.mean(dim=head_dim) if args.average_heads else v
+            return out
 
-        # Get record ID from the batch (set by Boltz's PredictionDataset)
+        # Resolve which recycling steps to save (same semantics as extract_hidden_reps)
+        n_steps = len(extractor.activations)
+        save_arg = args.recycling_steps_to_save
+        if save_arg == "all":
+            step_indices = list(range(n_steps))
+        elif save_arg == "last":
+            step_indices = [-1]
+        elif save_arg.startswith("every:"):
+            stride = int(save_arg.split(":")[1])
+            step_indices = list(range(0, n_steps, stride))
+            if step_indices and step_indices[-1] != n_steps - 1:
+                step_indices.append(n_steps - 1)
+        else:
+            step_indices = [int(x.strip()) for x in save_arg.split(",")]
+
         record_id = batch["record"][0].id
-
-        # Get token mask for reference
         token_mask = batch["token_pad_mask"].cpu()
-
-        # Save
         save_path = attn_dir / f"{record_id}_attention"
-        save_data = {
-            "token_mask": token_mask,
-            **attention,
-        }
+
+        if len(step_indices) == 1:
+            attention = _collect(extractor.get_step(step_indices[0]))
+            save_data = {"token_mask": token_mask, **attention}
+        else:
+            save_data = {"token_mask": token_mask}
+            attention = {}
+            for i in step_indices:
+                step_out = _collect(extractor.get_step(i))
+                save_data[f"step_{i % n_steps}"] = step_out
+                attention.update(step_out)  # just for summary/shape print
 
         if args.save_format == "pt":
             torch.save(save_data, f"{save_path}.pt")
         else:
             import numpy as np
 
-            np_data = {k: v.numpy() for k, v in save_data.items()}
-            np.savez_compressed(f"{save_path}.npz", **np_data)
+            # npz can't nest dicts — flatten multi-step keys as "step_X__name".
+            flat: dict = {}
+            for k, v in save_data.items():
+                if isinstance(v, dict):
+                    for kk, vv in v.items():
+                        flat[f"{k}__{kk}"] = vv.numpy()
+                else:
+                    flat[k] = v.numpy()
+            np.savez_compressed(f"{save_path}.npz", **flat)
 
         if attention:
             shape_info = next(iter(attention.values())).shape
             print(
                 f"[{batch_idx + 1}/{len(dataloader)}] Saved attention for '{record_id}' "
                 f"| shape per layer: {list(shape_info)} "
-                f"| {len(attention)} layers -> {save_path}.{args.save_format}"
+                f"| {len(attention)} layers x {len(step_indices)} step(s) "
+                f"-> {save_path}.{args.save_format}"
             )
         else:
             print(
                 f"[{batch_idx + 1}/{len(dataloader)}] WARNING: no attention captured "
-                f"for '{record_id}' — check --layers argument"
+                f"for '{record_id}' — check --layers / --layer_sites / --recycling_steps_to_save"
             )
 
         # Free memory
