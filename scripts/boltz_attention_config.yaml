@@ -30,7 +30,7 @@
 input:
   # Directory containing per-sequence subdirs or a flat dir of yamls
   # (discovered recursively via rglob '*.yaml').
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original/sequences
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p20/outputs/sequences
 
   # Optional: only run on yamls whose stem matches one of the lines in this file.
   # Leave null to run on every yaml found.
@@ -38,7 +38,7 @@ input:
 
 output:
   # Where per-chunk outputs will be written.
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/original/hidden_reps/attn_weights
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p20/tri_att
 
   # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
   staging_dir: null
@@ -75,7 +75,7 @@ extraction:
   layers: [0, 11, 23, 34, 44, 55, 63]
   layer_sites: [tri_att_start_weights, tri_att_end_weights]
   recycling_steps_to_save: last
-  average_heads: false
+  average_heads: "0,5,-1"
   save_format: pt
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
