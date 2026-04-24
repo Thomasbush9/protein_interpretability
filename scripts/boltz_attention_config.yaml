@@ -73,7 +73,7 @@ boltz:
 #   save_format   — pt | npz (npz flattens multi-step keys as 'step_X__name')
 extraction:
   layers: [0, 11, 23, 34, 44, 55, 63]
-  layer_sites: [attention_weights]
+  layer_sites: [tri_att_start_weights, tri_att_end_weights]
   recycling_steps_to_save: last
   average_heads: false
   save_format: pt
