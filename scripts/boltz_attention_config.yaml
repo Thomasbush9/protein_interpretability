@@ -74,8 +74,8 @@ boltz:
 extraction:
   layers: [0, 11, 23, 34, 44, 55, 63]
   layer_sites: [tri_att_start_weights, tri_att_end_weights]
-  recycling_steps_to_save: last
-  average_heads: "0,5,-1"
+  recycling_steps_to_save: "0,5,-1"
+  average_heads: false
   save_format: pt
 
 # Local parallelism: yamls are split into `num_gpus` chunks and one process
