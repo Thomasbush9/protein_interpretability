@@ -29,10 +29,7 @@
 set -euo pipefail
 
 # ---- Paths ----
-# Derive REPO_ROOT from the location of this slrm so the script works from
-# wherever the repo lives (home dir, lab filesystem, scratch, ...).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability"
 CONFIG_PATH="${1:-$REPO_ROOT/scripts/boltz_attention_config.yaml}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
