@@ -375,7 +375,185 @@ above. Ordered roughly by tractability.
 
 ---
 
-## 7. Cheatsheet
+## 7. The actual research question: locating the spurious-correction prior
+
+The empirical setup motivating this work: random sequence perturbation at 20%,
+40%, 70% of residues. TM-score to WT structure stays high at 20/40% and
+collapses at 70%. *A 40%-mutated sequence should not fold biologically* —
+producing a confident WT-like prediction is a known failure mode of
+AF2/Boltz-class models (they hallucinate plausible folds for non-natural
+sequences). The interpretability question is therefore not "why is the model
+robust" but:
+
+> **Which component injects the WT-fold prior that overrides the perturbed
+> sequence, and where in the forward pass does it commit?**
+
+That component is a candidate intervention site: down-weighting it should make
+the model predict honestly on designed/perturbed sequences and refuse to
+hallucinate.
+
+### 7.1 Candidate loci of the prior
+
+Ordered by my prior on which is doing the most work:
+
+| Site | Why it could be the prior | Test |
+|---|---|---|
+| **Recycling loop** | Each step re-injects the previous predicted structure as input → feedback loop locks in the first WT-like guess. | Run with `recycling_steps=1` vs default. If 20/40 TM-score drops at 1 step, recycling is doing the correction. One config flag, free experiment. |
+| **MSA module** | Per-mutant MSA at low perturbation still hits the WT family (≥80% identity → MMseqs/HMMER returns the same homologs). MSA effectively leaks WT info even though it is "per-mutant". | MSA-off × {0,20,40,70%} factorial. Report MSA Neff per mutant as covariate; if Neff stays high at 20/40 and drops at 70, MSA is the leak channel. |
+| **Pair track / triangle ops** | `z` enforces geometric consistency along triangles independently of sequence identity, so once `z` carries a fold-shape it resists perturbation in `s`. | Compare per-layer `layer_s` vs `layer_z` divergence per cohort. If `s` diverges but `z` doesn't, the pair track is the prior carrier. |
+| **Diffusion score network** | Has a learned "real protein" prior that collapses noisy conditioning to plausible structures. | Trunk swap: feed mutant trunk → WT diffusion conditioning, and vice versa. Tells you which side carries the WT-fold commitment. Per-step `x_0_hat` divergence locates *when* in the trajectory commitment happens. |
+| **Input embedder + relative-position init** | If `z₀` already encodes a fold from positional features alone, sequence is just a perturbation on a strong prior. | Run prediction with the input_embedder zeroed (positional features only). Whatever fold comes out is the "pure positional prior" floor. |
+
+### 7.2 Methodological additions for any of these
+
+These apply to any of the experiments above and fix interpretation problems
+visible in current divergence plots.
+
+- **Stop averaging across residues.** Per-layer divergence segregated into
+  `{mutated positions, neighbours within 8 Å, distant residues}` is the
+  mechanism. Two diagnostic patterns:
+  - Divergence at mutated positions *decreases* with depth → correction
+    actively pulls the mutated residue's representation back toward WT.
+  - Divergence at non-mutated positions stays low even though triangle ops
+    should propagate → the pair track is suppressing propagation.
+- **Compare residual stream (`layer_s`, `layer_z`) against per-block deltas
+  (`tri_*`, `transition_*`).** Cosine on residual stream is dominated by
+  carry-through and bounded near 1 by construction; the increments are where
+  the actual layer-wise change lives.
+- **Add a null.** Cosine between `layer_z` of WT and an *unrelated protein of
+  the same length*, and between WT and a fully random sequence. Pins the
+  bottom of the y-axis so the 0.95 → 0.65 dip is interpretable.
+- **Identity-decoding probe.** Train a linear probe on WT data to predict
+  residue identity from `layer_s_k`. Apply to mutants. The layer where the
+  probe stops recovering the *true* mutant residue identity is the layer
+  where the model has "forgotten" the mutation — anything past it operates
+  on a sequence-agnostic representation.
+- **Activation patching, both directions.** Standard direction: patch
+  `(s_WT, z_WT)` into mutant forward at layer `k`; if structure flips back to
+  WT-like, layer `k` carries the relevant computation. Reverse direction:
+  patch *random or scrambled* activations into mutant at layer `k`; if
+  structure stays WT-like, the commitment was already locked in upstream of
+  `k`. Sweeping `k` from both sides brackets the commitment layer.
+- **Scrambled-sequence control.** Run the model on a fully random sequence of
+  the same length (whatever MSA hits it gets, ~0). Predicted structure +
+  pLDDT directly measures the "fold prior in the absence of sequence
+  signal". Likely outcome: a confident-looking compact globule. That
+  confidence-on-noise is the prior you are hunting; it is what the
+  perturbation experiments are sneaking up on indirectly.
+- **MSA Neff as covariate.** Whatever you measure per cohort, plot it
+  conditioned on MSA depth. The MSA leak hypothesis predicts a strong
+  Neff–TM-score correlation in mutated cohorts and not in WT.
+
+### 7.3 Suggested order
+
+1. Recycling-depth ablation (one flag, sharpest single test).
+2. MSA-off × perturbation% factorial with Neff covariate.
+3. `layer_s` vs `layer_z` divergence with per-residue stratification + null
+   baseline.
+4. Identity-decoding probe to find the "forgetting" layer.
+5. Activation patching at the candidate layers from (3)–(4), both directions.
+6. Trunk swap into diffusion + per-step `x_0_hat` divergence.
+7. Scrambled-sequence control as a standalone calibration figure.
+
+The first three answer "where is the prior" with cheap configs and existing
+extraction infra. (4)–(5) localise it causally. (6)–(7) tie it to the
+diffusion side and to a clean baseline. The endpoint is a single figure that
+names the layer/component and shows that intervening on it produces lower
+TM-score (more honest predictions) on perturbed sequences without hurting WT.
+
+### 7.4 MSA-first experimental ladder (current priority)
+
+The MSA module is the top suspect for the prior carrier: in the existing
+extractions, `layer_z` is already strongly WT-like at recycling step 0, i.e.
+after only *one* MSA + pairformer pass. The MSA module's role is precisely to
+inject family information into `z` via outer-product mean, so it's the most
+direct mechanistic candidate. It also has the cleanest intervention pathway
+(replace input MSA with a neutral profile), which makes a positive
+identification immediately actionable.
+
+Concrete plan, cheap → expensive. Each tier is informative on its own and
+each can refute the hypothesis early.
+
+**Tier 1 — characterise the MSAs themselves (no model runs).**
+Before any inference, ask "are the per-mutant MSAs actually different from
+the WT MSA?". Per cohort {0, 20, 40, 70%}:
+
+- Shared-sequence fraction between per-mutant MSA and WT MSA (Jaccard on
+  MMseqs hit IDs).
+- Per-position Shannon-entropy correlation (Pearson, mutant column-entropy
+  vs WT column-entropy).
+- MSA Neff per mutant.
+
+Predicted shape under the leak hypothesis: 20/40% MSAs nearly identical to
+WT (Jaccard > 0.9, conservation correlation > 0.95); 70% collapses. If
+20/40% MSAs already differ substantially from WT, MSA is *not* the source —
+skip Tiers 2–4 and move to the recycling/pair-track candidates in §7.1.
+
+**Tier 2 — capture MSA module internals on existing extractions.**
+Three new extractor sites, same monkey-patch trick as `attention_weights`:
+
+- MSA attention weights (per-row, per-column). WT vs mutant: does the model
+  attend to the same MSA rows? Different attention = MSA used differently.
+- `Δz_MSA = z_after_msa − z_before_msa` per recycling step. Compare its norm
+  to per-pairformer-block `Δz` norms. If `||Δz_MSA||` dominates at recycling
+  step 0, the MSA module is the dominant prior carrier.
+- MSA module output projected back to the single track (if exposed) — what
+  does the MSA pass tell `s`?
+
+Piggybacks on existing extraction infra; gives per-layer attribution without
+re-running the model.
+
+**Tier 3 — MSA ablation factorial.**
+Three runs per mutant, everything else held fixed:
+
+| Condition | What it tests |
+|---|---|
+| As-is (per-mutant MSA) | baseline |
+| Single-sequence (no MSA, depth = 1) | does removing MSA collapse 20/40% TM-score? |
+| WT MSA on mutant query | positive control — explicit leak; should boost mutant TM-score if MSA is the channel |
+
+The 4×3 matrix `TM-score[cohort × MSA condition]` is the answer.
+Interpretation:
+- Single-seq collapses 20/40% AND WT-MSA boosts it back → MSA is the prior
+  carrier. Proceed to Tier 4.
+- Single-seq barely moves TM-score → MSA isn't the prior. Drop this thread,
+  go to §7.1 fallbacks (recycling, pair-track init, diffusion score net).
+
+**Tier 4 — the intervention: neutral-profile MSA.**
+Replace MSA with bland inputs that keep the MSA pathway active but carry no
+WT-family information. Two designs, both implementable as custom `.a3m` file
+generators (model code untouched):
+
+- **Background-frequency MSA**: query + N rows sampled iid from
+  amino-acid-background frequencies. Zero family info; the MSA infrastructure
+  runs normally.
+- **Class-conserved MSA**: query + N rows where each position is sampled
+  from the amino-acid *class* of the WT residue (hydrophobic / polar /
+  charged / aromatic). Carries general biochemical-class context without
+  specific family identity. This is the scientifically more interesting
+  variant — closer to what a corrected model *should* consume.
+
+Run both on 20/40% mutants. Check:
+- TM-score: does it drop to honest levels?
+- pLDDT: does it calibrate (drop on regions that shouldn't fold)?
+- Residual WT-likeness, if any, is attributable to other sites — your
+  follow-ups in §7.1 target those.
+
+**End-state figure.** A single 2D matrix:
+
+```
+rows    = {full-MSA, single-seq, background-MSA, class-MSA, WT-MSA}
+columns = {0, 20, 40, 70%}
+cells   = TM-score (panel A) + pLDDT (panel B)
+```
+
+Under the leak hypothesis this is a step function: full-MSA and WT-MSA stay
+high across perturbation columns; class/background-MSA collapse on 20/40%
+while leaving 0% intact. That matrix alone is the result.
+
+---
+
+## 8. Cheatsheet
 
 - Diffusion = 200-step EDM denoising of atom coords, runs *once* after the
   trunk (per recycling).
