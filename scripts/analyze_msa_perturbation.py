@@ -48,10 +48,11 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
+
+# matplotlib / seaborn are only needed for plotting. Imported lazily inside
+# make_plots so the CSV-only path runs on a minimal env (numpy + pandas).
 
 from protein_interpretability.msa_analysis import (
     DEFAULT_NEFF_THRESHOLDS,
@@ -88,6 +89,8 @@ def _level_sort_key(level: str) -> tuple[int, int]:
 
 
 def _setup_style() -> None:
+    import seaborn as sns
+
     sns.set_theme(
         style="whitegrid",
         context="notebook",
@@ -269,6 +272,8 @@ def _plot_box(
     wt_value: float | None = None,
     log: bool = False,
 ) -> None:
+    import seaborn as sns
+
     levels = sorted(df["level"].unique(), key=_level_sort_key)
     palette = {lv: LEVEL_PALETTE.get(lv, "#888888") for lv in levels}
     sns.boxplot(
@@ -362,6 +367,8 @@ def _plot_neff_vs_identity(
 
 
 def _plot_pid_distribution(records: list[MSARecord], wt: WTReference, *, ax) -> None:
+    import seaborn as sns
+
     rows: list[dict] = []
     for r in records:
         for v in r.pid_to_query.tolist():
@@ -398,6 +405,9 @@ def make_plots(
     output_dir: Path,
     thresholds: tuple[float, ...],
 ) -> None:
+    import matplotlib.pyplot as plt
+
+    _setup_style()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Scalar metrics: depth, Neff80 (log), mean column correlation.
@@ -520,6 +530,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--neff-thresholds", type=float, nargs="*",
                    default=list(DEFAULT_NEFF_THRESHOLDS),
                    help="Identity thresholds for Neff (default: %(default)s).")
+    p.add_argument("--no-plots", action="store_true",
+                   help="Skip plot generation; only write CSVs (cluster-friendly: "
+                        "doesn't need matplotlib/seaborn installed).")
     p.add_argument("--workers", type=int, default=4,
                    help="Parallel processes for per-MSA work (default: %(default)s).")
     return p.parse_args()
@@ -536,7 +549,6 @@ def main() -> None:
         sys.exit(1)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    _setup_style()
 
     thresholds = tuple(float(t) for t in args.neff_thresholds)
 
@@ -590,8 +602,18 @@ def main() -> None:
     logger.info("Wrote %s (%d rows)", per_file_path, len(per_file))
     logger.info("Wrote %s", aggregate_path)
 
-    make_plots(per_file, records, wt, args.output_dir, thresholds)
-    logger.info("Plots written to %s", args.output_dir)
+    if args.no_plots:
+        logger.info("--no-plots set; skipping plot generation")
+        return
+
+    try:
+        make_plots(per_file, records, wt, args.output_dir, thresholds)
+        logger.info("Plots written to %s", args.output_dir)
+    except ImportError as e:
+        logger.warning(
+            "Plotting deps not available (%s); skipping plots. "
+            "Install matplotlib + seaborn or pass --no-plots to silence.", e,
+        )
 
 
 if __name__ == "__main__":
