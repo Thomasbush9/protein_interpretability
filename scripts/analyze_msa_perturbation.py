@@ -19,7 +19,7 @@ unless ``--include-unlabeled`` is set.
 Outputs (under ``--output-dir`` unless overridden):
 
 * per-MSA results CSV — one row per perturbed MSA, default
-  ``<output-dir>/msa_metrics.csv``, override with ``--global-csv PATH``.
+  ``<output-dir>/msa_comparison.csv``, override with ``--global-csv PATH``.
   First two columns are ``sequence_idx`` (integer parsed from the path /
   filename, e.g. ``seq_00318`` or ``318_protein_.a3m`` → ``318``) and
   ``predicted_path`` (the source MSA path), making the CSV ready to join
@@ -37,8 +37,7 @@ Example::
     uv run python scripts/analyze_msa_perturbation.py \\
         --source /path/to/original/msa/A_protein_.a3m \\
         --input-dir /n/holylfs06/.../augmented \\
-        --output-dir /path/to/output_dir \\
-        --global-csv /path/to/output_dir/msa_metrics.csv
+        --output-dir /path/to/output_dir
 """
 
 from __future__ import annotations
@@ -508,9 +507,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", type=Path, required=True,
                    help="Where plots and the aggregate CSV will be written.")
     p.add_argument("--global-csv", type=Path, default=None,
-                   help="Explicit path for the global per-MSA results CSV "
-                        "(default: <output-dir>/msa_metrics.csv). Parent dirs "
-                        "are created if needed.")
+                   help="Optional override for the per-MSA results CSV path "
+                        "(default: <output-dir>/msa_comparison.csv). Parent "
+                        "dirs are created if needed.")
     p.add_argument("--pattern", default="**/*.a3m",
                    help="Glob pattern under --input-dir (default: %(default)s).")
     p.add_argument("--levels", nargs="*", default=None,
@@ -583,7 +582,7 @@ def main() -> None:
     per_file = build_per_file_df(records, thresholds)
     aggregate = build_aggregate_df(per_file, thresholds)
 
-    per_file_path = args.global_csv or (args.output_dir / "msa_metrics.csv")
+    per_file_path = args.global_csv or (args.output_dir / "msa_comparison.csv")
     per_file_path.parent.mkdir(parents=True, exist_ok=True)
     aggregate_path = args.output_dir / "msa_aggregate_metrics.csv"
     per_file.to_csv(per_file_path, index=False)
