@@ -7,7 +7,7 @@ from pathlib import Path
 
 from protein_interpretability.scoring import path_rmsd, path_tm_score
 
-SEQUENCE_INDEX_PATTERN = re.compile(r"seq_(\d+)")
+SEQUENCE_INDEX_PATTERN = re.compile(r"seq_(\w+)")
 SUPPORTED_STRUCTURE_SUFFIXES = (".cif", ".pdb")
 
 
@@ -80,12 +80,13 @@ def find_structure_files(
     return sorted(path for path in paths if path.is_file())
 
 
-def extract_sequence_idx(path: Path) -> int:
+def extract_sequence_idx(path: Path) -> int | str:
     candidates = (path.stem, *path.parts)
     for candidate in candidates:
         match = SEQUENCE_INDEX_PATTERN.search(candidate)
         if match is not None:
-            return int(match.group(1))
+            label = match.group(1)
+            return int(label) if label.isdigit() else label
 
     raise ValueError(
         f"Could not parse sequence index from '{path}'. "
@@ -122,7 +123,11 @@ def score_predictions(
             }
         )
 
-    rows.sort(key=lambda row: int(row["sequence_idx"]))
+    def sort_key(row: dict[str, str | int | float]) -> tuple[int, int | str]:
+        idx = row["sequence_idx"]
+        return (1, idx) if isinstance(idx, int) else (0, str(idx))
+
+    rows.sort(key=sort_key)
     return rows
 
 
