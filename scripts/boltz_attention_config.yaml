@@ -59,10 +59,12 @@ boltz:
 
 # Which attention-weight sites to capture.
 #   layers      — pairformer layer indices: list of ints, or "all"
+#   msa_layers  — MSA-module layer indices for pwa_weights, or "all" (Boltz2 has 4)
 #   layer_sites — which weight sites to capture. Supported:
 #                   attention_weights        (AttentionPairBias, (B,H,N,N))
 #                   tri_att_start_weights    (TriangleAttention,  (B,I,H,J,J))
 #                   tri_att_end_weights      (TriangleAttention,  (B,I,H,J,J))
+#                   pwa_weights              (MSA PairWeightedAveraging, (B,H,N,N))
 #   recycling_steps_to_save — which recycling steps to save.
 #       "last"        : final step only (flat output, backward-compatible, default)
 #       "all"         : every step

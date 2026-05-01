@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import contextlib
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
 
-from boltz.model.models.boltz2 import Boltz2
+if TYPE_CHECKING:
+    from boltz.model.models.boltz2 import Boltz2
 
 
 class Boltz2Extractor:
@@ -41,6 +42,7 @@ class Boltz2Extractor:
     )
 
     LAYER_SITES = (
+        # ---- Pairformer layers (indexed by `layers`) -----------------------
         "layer_s",                # per-layer sequence output (B, N, token_s)
         "layer_z",                # per-layer pairwise output (B, N, N, token_z)
         "attention",              # AttentionPairBias output on s
@@ -53,7 +55,11 @@ class Boltz2Extractor:
         "tri_att_end_weights",    # post-softmax weights (B, I, H, J, J) — forces eager path
         "transition_s",           # sequence transition output
         "transition_z",           # pairwise transition output
+        # ---- MSA layers (indexed by `msa_layers`) --------------------------
+        "pwa_weights",            # PairWeightedAveraging post-softmax (B, H, N, N) — forces unchunked path
     )
+    # Sites that live inside ``model.msa_module.layers`` rather than the pairformer.
+    MSA_LAYER_SITES = frozenset({"pwa_weights"})
 
     def __init__(
         self,
@@ -61,6 +67,7 @@ class Boltz2Extractor:
         sites: list[str] | None = None,
         layers: list[int] | None = None,
         layer_sites: list[str] | None = None,
+        msa_layers: list[int] | None = None,
         detach: bool = True,
         to_cpu: bool = True,
     ):
@@ -69,8 +76,12 @@ class Boltz2Extractor:
             model: Boltz2 model instance.
             sites: Top-level sites to capture. ``None`` = all :attr:`SITES`.
             layers: Pairformer layer indices to hook. ``None`` = all layers.
-            layer_sites: Per-layer sites to capture.
+            layer_sites: Per-layer sites to capture (mix of pairformer and MSA
+                sites — MSA sites are routed to ``model.msa_module.layers``).
                 ``None`` = ``["layer_s", "layer_z"]``.
+            msa_layers: MSA-module layer indices to hook (only relevant when
+                ``layer_sites`` includes a member of :attr:`MSA_LAYER_SITES`).
+                ``None`` = all MSA layers.
             detach: Detach and clone stored tensors (saves memory graph).
             to_cpu: Move stored tensors to CPU (saves GPU memory).
         """
@@ -78,13 +89,17 @@ class Boltz2Extractor:
         self.sites = sites if sites is not None else list(self.SITES)
         self.layers = layers
         self.layer_sites = layer_sites if layer_sites is not None else ["layer_s", "layer_z"]
+        self.msa_layers = msa_layers
         self.detach = detach
         self.to_cpu = to_cpu
 
         self._handles: list[torch.utils.hooks.RemovableHook] = []
         self._patched: list[tuple[nn.Module, str, Any]] = []  # (module, attr, original)
         self._installed: bool = False
-        self._pairformer_calls: int = 0
+        # Per-module pre-hook call counts; max of these = number of recycling
+        # steps seen so far. Whichever module fires first per step opens the
+        # new dict; the others see it already exists.
+        self._step_call_counts: dict[str, int] = {}
         self.activations: list[dict[str, torch.Tensor]] = []
 
     # ------------------------------------------------------------------
@@ -131,19 +146,47 @@ class Boltz2Extractor:
                 f"{n_layers}-layer pairformer (valid: 0..{n_layers - 1})"
             )
 
-        # --- Recycling-step boundary: pre-hook on pairformer appends new dict.
-        # On the *first* pairformer call we reuse the dict already seeded by
-        # input_embedder (if any); subsequent calls open a new recycling step.
-        def pairformer_pre_hook(module: nn.Module, inputs: Any) -> None:
-            if self._pairformer_calls > 0:
-                self.activations.append({})
-            elif not self.activations:
-                self.activations.append({})
-            self._pairformer_calls += 1
+        # Resolve MSA module + layer indices if any MSA-side site was requested.
+        msa_sites = [s for s in self.layer_sites if s in self.MSA_LAYER_SITES]
+        pf_sites = [s for s in self.layer_sites if s not in self.MSA_LAYER_SITES]
+        msa_module = None
+        msa_layer_indices: list[int] = []
+        if msa_sites:
+            msa_module = self._unwrap(self.model.msa_module)
+            n_msa_layers = len(msa_module.layers)
+            msa_layer_indices = (
+                self.msa_layers if self.msa_layers is not None else list(range(n_msa_layers))
+            )
+            invalid_msa = [i for i in msa_layer_indices if i < 0 or i >= n_msa_layers]
+            if invalid_msa:
+                raise ValueError(
+                    f"MSA layer indices {invalid_msa} are out of range for "
+                    f"{n_msa_layers}-layer MSA module (valid: 0..{n_msa_layers - 1})"
+                )
+
+        # --- Recycling-step boundary -----------------------------------------
+        # Each recycling step calls msa_module first, then pairformer. Whichever
+        # module is hooked fires its pre-hook first per step and opens a new
+        # dict; subsequent firings in the same step see len(activations) already
+        # matches and skip. The first step reuses the dict seeded by
+        # input_embedder (if any).
+        def make_step_pre_hook(name: str):
+            def hook(module: nn.Module, inputs: Any) -> None:
+                self._step_call_counts[name] = (
+                    self._step_call_counts.get(name, 0) + 1
+                )
+                max_seen = max(self._step_call_counts.values())
+                while len(self.activations) < max_seen:
+                    self.activations.append({})
+            return hook
 
         self._handles.append(
-            pairformer.register_forward_pre_hook(pairformer_pre_hook)
+            pairformer.register_forward_pre_hook(make_step_pre_hook("pairformer"))
         )
+        if msa_module is not None:
+            self._handles.append(
+                msa_module.register_forward_pre_hook(make_step_pre_hook("msa_module"))
+            )
 
         # --- Top-level: input_embedder
         if "input_embedder" in self.sites:
@@ -176,8 +219,8 @@ class Boltz2Extractor:
                 self.model.distogram_module.register_forward_hook(distogram_hook)
             )
 
-        # --- Per-layer hooks (indices already validated above)
-        for i in layer_indices:
+        # --- Pairformer per-layer hooks (skip if no pairformer-side site requested)
+        for i in (layer_indices if pf_sites else []):
             layer = pairformer.layers[i]
             prefix = f"pairformer_{i}"
 
@@ -232,6 +275,16 @@ class Boltz2Extractor:
                     submod = getattr(layer, attr_name)
                     self._patch_tri_attention_weights(
                         submod, f"{prefix}_{site_name}"
+                    )
+
+        # --- MSA-module per-layer hooks
+        if msa_module is not None and "pwa_weights" in msa_sites:
+            for i in msa_layer_indices:
+                layer = msa_module.layers[i]
+                if hasattr(layer, "pair_weighted_averaging"):
+                    self._patch_pwa_weights(
+                        layer.pair_weighted_averaging,
+                        f"msa_{i}_pwa_weights",
                     )
 
         self._installed = True
@@ -332,6 +385,52 @@ class Boltz2Extractor:
         tri_module.forward = patched_forward
         self._patched.append((tri_module, "forward", original_forward))
 
+    def _patch_pwa_weights(self, module: nn.Module, key: str) -> None:
+        """Monkey-patch ``PairWeightedAveraging.forward`` to capture post-softmax weights.
+
+        Mirrors the unchunked-heads branch of
+        :class:`boltz.model.layers.pair_averaging.PairWeightedAveraging` byte
+        for byte, with a single ``_store(key, w)`` after the softmax. Forces
+        the unchunked path even when the caller passes ``chunk_heads=True`` —
+        the chunked branch computes weights one head at a time and never
+        materializes the full ``(B, H, N, N)`` tensor we want to capture.
+        Math is identical; only the memory layout differs (relevant for
+        ``N > const.chunk_size_threshold = 384``).
+
+        Captured tensor shape: ``(B, num_heads, N, N)``. Rows along the last
+        dim sum to 1 (it's a softmax over `j` per `(head, i)`).
+        """
+        original_forward = module.forward
+        extractor = self
+
+        @wraps(original_forward)
+        def patched_forward(m, z, mask, chunk_heads=False):
+            # Always run the unchunked path so we can capture (B, H, N, N).
+            m_n = module.norm_m(m)
+            z_n = module.norm_z(z)
+
+            v = module.proj_m(m_n)
+            v = v.reshape(*v.shape[:3], module.num_heads, module.c_h)
+            v = v.permute(0, 3, 1, 2, 4)  # (B, H, S, N, c_h)
+
+            b = module.proj_z(z_n)
+            b = b.permute(0, 3, 1, 2)     # (B, H, N, N)
+            b = b + (1 - mask[:, None]) * -module.inf
+            w = torch.softmax(b, dim=-1)  # (B, H, N, N)
+
+            extractor._store(key, w)
+
+            g = module.proj_g(m_n).sigmoid()
+
+            o = torch.einsum("bhij,bhsjd->bhsid", w, v)
+            o = o.permute(0, 2, 3, 1, 4)
+            o = o.reshape(*o.shape[:3], module.num_heads * module.c_h)
+            o = module.proj_o(g * o)
+            return o
+
+        module.forward = patched_forward
+        self._patched.append((module, "forward", original_forward))
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -350,7 +449,7 @@ class Boltz2Extractor:
     def clear(self) -> None:
         """Clear stored activations (hooks remain installed)."""
         self.activations.clear()
-        self._pairformer_calls = 0
+        self._step_call_counts.clear()
 
     @contextlib.contextmanager
     def recording(self):

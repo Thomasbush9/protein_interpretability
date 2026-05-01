@@ -79,8 +79,19 @@ def parse_args():
             "attention_weights (AttentionPairBias, (B,H,N,N)), "
             "tri_att_start_weights / tri_att_end_weights "
             "(TriangleAttention, (B,I,H,J,J) — forces eager path; "
-            "pair with --no_kernels for a fully consistent run). "
-            "Default: attention_weights."
+            "pair with --no_kernels for a fully consistent run), "
+            "pwa_weights (MSA-module PairWeightedAveraging, (B,H,N,N) — "
+            "forces unchunked-heads path; selected MSA layers via "
+            "--msa_layers). Default: attention_weights."
+        ),
+    )
+    parser.add_argument(
+        "--msa_layers",
+        type=str,
+        default="all",
+        help=(
+            "Comma-separated MSA-module layer indices to capture for "
+            "pwa_weights, or 'all'. Boltz2 has 4 MSA layers."
         ),
     )
     parser.add_argument(
@@ -235,8 +246,17 @@ def main():
     if args.layers != "all":
         layer_indices = [int(x.strip()) for x in args.layers.split(",")]
 
+    msa_layer_indices = None
+    if args.msa_layers != "all":
+        msa_layer_indices = [int(x.strip()) for x in args.msa_layers.split(",")]
+
     # Parse & validate layer_sites (weight sites only)
-    _SUPPORTED = ("attention_weights", "tri_att_start_weights", "tri_att_end_weights")
+    _SUPPORTED = (
+        "attention_weights",
+        "tri_att_start_weights",
+        "tri_att_end_weights",
+        "pwa_weights",
+    )
     layer_sites = [s.strip() for s in args.layer_sites.split(",") if s.strip()]
     for s in layer_sites:
         if s not in _SUPPORTED:
@@ -256,7 +276,11 @@ def main():
 
     # Install attention hooks via Boltz2Extractor
     extractor = Boltz2Extractor(
-        model, sites=[], layers=layer_indices, layer_sites=layer_sites,
+        model,
+        sites=[],
+        layers=layer_indices,
+        layer_sites=layer_sites,
+        msa_layers=msa_layer_indices,
     )
     extractor.install()
 
@@ -299,17 +323,20 @@ def main():
             for k, v in step_dict.items():
                 # Pair attention (AttentionPairBias): (B, H, N, N) -> head dim 1
                 # Triangle attention: (B, I, H, J, J) -> head dim 2
+                # PWA (PairWeightedAveraging): (B, H, N, N) -> head dim 1
                 if k.endswith("_attention_weights"):
                     head_dim = 1
+                    layer_name = k.replace("_attention_weights", "").replace(
+                        "pairformer_", "pairformer_layer_"
+                    )
                 elif k.endswith("_tri_att_start_weights") or k.endswith("_tri_att_end_weights"):
                     head_dim = 2
+                    layer_name = k.replace("pairformer_", "pairformer_layer_")
+                elif k.endswith("_pwa_weights"):
+                    head_dim = 1
+                    layer_name = k.replace("msa_", "msa_layer_", 1)
                 else:
                     continue
-                # Strip _attention_weights for pair (backward compat with
-                # existing plots); triangle keys keep their suffix.
-                layer_name = k.replace("_attention_weights", "").replace(
-                    "pairformer_", "pairformer_layer_"
-                )
                 out[layer_name] = v.mean(dim=head_dim) if args.average_heads else v
             return out
 
