@@ -45,6 +45,7 @@ _SUPPORTED_SITES = (
     "attention_weights",
     "tri_att_start_weights",
     "tri_att_end_weights",
+    "pwa_weights",
 )
 
 
@@ -170,6 +171,7 @@ def build_command(
         "--diffusion_samples", str(boltz.get("diffusion_samples", 1)),
         "--step_scale", str(boltz.get("step_scale", 1.5)),
         "--layers", format_list_arg(extraction.get("layers", "all")),
+        "--msa_layers", format_list_arg(extraction.get("msa_layers", "all")),
         "--layer_sites", ",".join(layer_sites),
         "--recycling_steps_to_save",
         format_list_arg(extraction.get("recycling_steps_to_save", "last")),
@@ -318,6 +320,7 @@ def main() -> None:
         print(f"    {d.name}: {n} yamls")
     print(f"  recycling     : {boltz_cfg.get('recycling_steps')}")
     print(f"  layers        : {format_list_arg(extraction_cfg.get('layers', 'all'))}")
+    print(f"  msa_layers    : {format_list_arg(extraction_cfg.get('msa_layers', 'all'))}")
     print(f"  layer_sites   : {','.join(layer_sites)}")
     print(f"  recycling_save: {format_list_arg(extraction_cfg.get('recycling_steps_to_save', 'last'))}")
     print(f"  average_heads : {extraction_cfg.get('average_heads', False)}")
