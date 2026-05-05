@@ -199,8 +199,16 @@ def main() -> None:
         ),
     )
 
+    print(
+        f"[attribution] {len(filtered_manifest.records)} record(s) in manifest "
+        f"({out_dir})"
+    )
     if not filtered_manifest.records:
-        print("No inputs to process.")
+        print(
+            "No inputs to process. The out_dir's processed/manifest.json may "
+            "be empty — try a fresh --out_dir or delete the existing "
+            f"{out_dir}/processed/ tree."
+        )
         return
 
     data_module = Boltz2InferenceDataModule(

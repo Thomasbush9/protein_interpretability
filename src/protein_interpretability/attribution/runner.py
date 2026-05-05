@@ -7,6 +7,7 @@ one forward.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 
 import torch
@@ -15,6 +16,52 @@ import torch.nn as nn
 from .capture import GradientCapture
 from .io import AttributionResult, collect_provenance
 from .targets import AttributionTarget
+
+
+class _NoOpGradContext:
+    """Drop-in replacement for ``torch.set_grad_enabled`` that does nothing."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def __enter__(self) -> "_NoOpGradContext":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+
+@contextlib.contextmanager
+def _neutralize_set_grad_enabled():
+    """Make ``torch.set_grad_enabled`` a no-op for the duration of the block.
+
+    Why: Boltz2.forward wraps the trunk in
+    ``with torch.set_grad_enabled(self.training and self.structure_prediction_training)``
+    which evaluates to False under ``model.eval()`` and kills our backward
+    graph. Neutralising the call leaves the global grad state to whatever the
+    outer ``torch.enable_grad()`` set — exactly what we need. Other
+    ``torch.no_grad()`` blocks in diffusion are unaffected (different API).
+    """
+    saved = torch.set_grad_enabled
+    torch.set_grad_enabled = _NoOpGradContext
+    try:
+        yield
+    finally:
+        torch.set_grad_enabled = saved
+
+
+@contextlib.contextmanager
+def _temporarily(obj, attr: str, value):
+    """Temporarily set ``obj.attr = value``, restoring on exit."""
+    if not hasattr(obj, attr):
+        yield
+        return
+    old = getattr(obj, attr)
+    setattr(obj, attr, value)
+    try:
+        yield
+    finally:
+        setattr(obj, attr, old)
 
 
 def run_per_step(
@@ -54,7 +101,15 @@ def run_per_step(
     results: list[AttributionResult] = []
     cap = GradientCapture(model)
 
-    with cap, torch.enable_grad():
+    # Skip the diffusion sampling path — we only need the distogram (computed
+    # before diffusion). Saves a chunk of forward time and avoids any
+    # downstream structure_module assertions that expect ground-truth coords.
+    with (
+        cap,
+        torch.enable_grad(),
+        _neutralize_set_grad_enabled(),
+        _temporarily(model, "skip_run_structure", True),
+    ):
         for k in recycling_steps:
             cap.clear()
             for p in model.parameters():
@@ -66,10 +121,9 @@ def run_per_step(
             logits = cap.distogram
             if not logits.requires_grad:
                 raise RuntimeError(
-                    "distogram tensor has requires_grad=False — Boltz forward "
-                    "is running under no_grad/inference_mode. Check that the "
-                    "model isn't in inference_mode and that the CLI sets "
-                    "torch.set_grad_enabled(True) before model(batch). "
+                    "distogram tensor has requires_grad=False even with "
+                    "torch.set_grad_enabled neutralised — something else in "
+                    "the forward path is disabling grad. "
                     f"Captured surfaces: {cap.captured_keys()}"
                 )
             loss = target(logits, token_mask=token_mask)
