@@ -350,6 +350,99 @@ python -m protein_interpretability.extract_attention input.yaml \
 
 Outputs are saved to `<out_dir>/boltz_results_<stem>/attention/`.
 
+## Boltz2 Gradient Attribution
+
+Computes input-gradient attribution on Boltz2's distogram logits — answers
+*"which inputs drove the model's structural prediction at recycle K?"*
+
+The attribution loss sits on the distogram head (deterministic, pre-diffusion),
+so the backward graph is reproducible and contains no stochastic SDE steps.
+For each requested recycling depth K, the runner does one fresh
+`forward(recycling_steps=K)` + one `backward()` and saves gradients on:
+
+| Surface | Hook | Shape | Reads as |
+|---|---|---|---|
+| `query_emb` | `model.input_embedder` (output) | `(B, N, D_s)` | "did the query residue itself contribute?" |
+| `msa_emb` | `model.msa_module` (output, last call) | model-dependent | "is signal flowing from MSA at recycle K?" |
+
+Pair-representation gradients per recycle step are deferred to a v2 — see
+the design log in the project's vault folder.
+
+### Single-record CLI
+
+```bash
+python -m protein_interpretability.attribution.cli input.yaml \
+    --out_dir ./attribution_output \
+    --target contact:128,142 \
+    --recycling_steps 0,5,10 \
+    --no_kernels
+```
+
+Targets:
+
+| Spec | Maps to | Loss |
+|---|---|---|
+| `contact:i,j` | `ContactBinNLL(i, j)` | -log p(d_ij ∈ contact bins) |
+| `pair_bin:i,j,b` | `PairLogProb(i, j, b)` | -log p(d_ij = bin b) |
+
+Outputs land at `<out_dir>/<record_id>_attribution_R<K>.pt` — one file per
+recycling depth. Schema is versioned (`attribution_v1`); each file carries
+gradients, the input activations they were taken at, the target spec, the
+token mask, and a provenance dict (git SHA, timestamp, torch version, config).
+
+`--no_kernels` is recommended for grad runs (fused kernels can swallow
+intermediates `retain_grad()` needs).
+
+### Python API
+
+```python
+import torch
+from protein_interpretability.attribution import (
+    ContactBinNLL, run_per_step, save_result, load_result,
+)
+
+target = ContactBinNLL(pair_i=128, pair_j=142)
+results = run_per_step(
+    model=model,                  # eval-mode Boltz2
+    batch=batch,                  # already on device
+    target=target,
+    recycling_steps=(0, 5, 10),
+)
+for r in results:
+    print(f"R={r.recycling_steps} loss={r.target_value:.4f}")
+    save_result(r, f"./out/{r.record_id}_R{r.recycling_steps}.pt")
+
+# Reload + analyse
+r = load_result("./out/seq_00000_R10.pt")
+ixg_query = r.input_x_grad("query")     # (B, N, D_s)
+ixg_msa = r.input_x_grad("msa")         # (B, S, N, D_msa)
+```
+
+For the lower-level capture context (no per-step orchestration):
+
+```python
+from protein_interpretability.attribution import GradientCapture
+
+cap = GradientCapture(model)
+with cap, torch.set_grad_enabled(True):
+    cap.clear()
+    _ = model(batch, recycling_steps=10)
+    loss = target(cap.distogram, token_mask=batch["token_pad_mask"])
+    loss.backward()
+    query_grad = cap.query_emb.grad
+    msa_grad = cap.msa_emb.grad
+```
+
+### Memory + reproducibility notes
+
+- Default mode does **K separate forward passes** (one per requested
+  recycling depth). Memory is bounded to a single forward; total wall-time
+  scales linearly in `len(recycling_steps)`.
+- The model must be in `eval()`. The runner enables grad explicitly inside
+  the capture context; nothing else needs changing.
+- Padded positions are zeroed on the saved gradient/activation tensors so
+  downstream analysis can ignore the mask.
+
 ## Scoring
 
 Structure comparison utilities for evaluating mutations:
