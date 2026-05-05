@@ -34,7 +34,13 @@ exec(  # noqa: S102 - test-only sandbox
     _NS,
 )
 # Pull just the helper definitions out of the source by string match.
-for fn in ("revert_stem", "parse_variant_id", "kl_per_pair", "aggregate_divergence"):
+for fn in (
+    "revert_stem",
+    "parse_variant_id",
+    "kl_per_pair",
+    "aggregate_divergence",
+    "write_variant_a3m",
+):
     start = _SRC.index(f"def {fn}(")
     # End at the next top-level def/decorator or '# ---' comment block.
     rest = _SRC[start:]
@@ -49,6 +55,7 @@ revert_stem = _NS["revert_stem"]
 parse_variant_id = _NS["parse_variant_id"]
 kl_per_pair = _NS["kl_per_pair"]
 aggregate_divergence = _NS["aggregate_divergence"]
+write_variant_a3m = _NS["write_variant_a3m"]
 
 
 def test_revert_stem_format() -> None:
@@ -110,3 +117,37 @@ def test_aggregate_no_valid_pairs_returns_nan() -> None:
     agg = aggregate_divergence(kl_map, mask)
     assert agg["n_pairs"] == 0
     assert agg["kl_mean"] != agg["kl_mean"]  # NaN check
+
+
+def test_write_variant_a3m_replaces_first_sequence_only(tmp_path) -> None:
+    src = tmp_path / "src.a3m"
+    src.write_text(
+        ">query\n"
+        "MKLAVTGEDDQ\n"
+        ">homolog_1\n"
+        "MKLAVTGEAAQ\n"
+        ">homolog_2 with insertion\n"
+        "MKLav-TGEDDQ\n"
+    )
+    out = tmp_path / "patched.a3m"
+    write_variant_a3m(src, "MKLAVTGEDQQ", out)
+    text = out.read_text().splitlines()
+    # Header + new query, then unchanged homolog rows.
+    assert text[0] == ">query"
+    assert text[1] == "MKLAVTGEDQQ"
+    assert text[2] == ">homolog_1"
+    assert text[3] == "MKLAVTGEAAQ"
+    assert text[4] == ">homolog_2 with insertion"
+    assert text[5] == "MKLav-TGEDDQ"
+
+
+def test_write_variant_a3m_length_mismatch_raises(tmp_path) -> None:
+    src = tmp_path / "src.a3m"
+    src.write_text(">q\nMKLA\n>h\nMKLA\n")
+    out = tmp_path / "out.a3m"
+    try:
+        write_variant_a3m(src, "MKLAA", out)  # wrong length
+    except ValueError as e:
+        assert "length" in str(e)
+        return
+    raise AssertionError("expected ValueError on length mismatch")

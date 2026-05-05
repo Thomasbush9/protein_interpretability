@@ -88,6 +88,41 @@ def write_variant_yaml(
         yaml.safe_dump(cfg, f, sort_keys=False)
 
 
+def write_variant_a3m(original: Path, new_query: str, out: Path) -> None:
+    """Copy ``original`` to ``out`` with the first sequence row replaced by ``new_query``.
+
+    Required because Boltz's featurizer (``featurizerv2.py:259-290``) compares
+    the YAML's protein sequence to the MSA's first row and silently swaps in a
+    dummy MSA on any non-MET/UNK mismatch. To revert one query position
+    cleanly we need the MSA's first row to track the variant query — the
+    homolog rows below stay untouched.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out_lines: list[str] = []
+    first_replaced = False
+    with original.open() as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if not line or line.startswith("#") or line.startswith(">"):
+                out_lines.append(raw if raw.endswith("\n") else raw + "\n")
+                continue
+            if not first_replaced:
+                # Sanity: the first MSA row must already match the variant in length
+                # — otherwise the .a3m wasn't built for this protein.
+                if len(line) != len(new_query):
+                    raise ValueError(
+                        f"first MSA row length {len(line)} != query length "
+                        f"{len(new_query)} (msa={original})"
+                    )
+                out_lines.append(new_query + "\n")
+                first_replaced = True
+            else:
+                out_lines.append(raw if raw.endswith("\n") else raw + "\n")
+    if not first_replaced:
+        raise ValueError(f"no sequence rows found in {original}")
+    out.write_text("".join(out_lines))
+
+
 # Boltz parses ``record.id`` from the YAML filename stem (parse/yaml.py:67),
 # so we encode the variant identity in the filename and recover it later.
 BASELINE_SUFFIX = "__baseline"
@@ -206,11 +241,13 @@ def main() -> None:
     out_dir = Path(args.out_dir).expanduser() / f"occlusion_{args.mutant_yaml.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
     staging_dir = out_dir / "_variants"
-    if staging_dir.exists():
-        for f in staging_dir.iterdir():
-            if f.is_file() or f.is_symlink():
-                f.unlink()
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    msa_staging_dir = out_dir / "_variant_msas"
+    for d in (staging_dir, msa_staging_dir):
+        if d.exists():
+            for f in d.iterdir():
+                if f.is_file() or f.is_symlink():
+                    f.unlink()
+        d.mkdir(parents=True, exist_ok=True)
 
     # ---- Load sequences and identify mutated positions
     mut_seq, mut_msa, mut_id = load_yaml_seq(args.mutant_yaml)
@@ -237,21 +274,33 @@ def main() -> None:
         f"mutations={len(mutated_positions)}"
     )
 
-    # ---- Generate variant YAMLs
-    write_variant_yaml(
-        mut_seq, mut_msa, mut_id, staging_dir / f"{base_stem}{BASELINE_SUFFIX}.yaml"
-    )
+    # ---- Generate per-variant YAMLs + patched MSAs (each .a3m's first row
+    #      tracks the variant query so Boltz's featurizer doesn't swap in a
+    #      dummy MSA on the mismatch).
+    mut_msa_path = Path(mut_msa).expanduser()
+    if not mut_msa_path.exists():
+        raise SystemExit(
+            f"MSA path from mutant YAML doesn't exist: {mut_msa_path}. "
+            f"Either fix the YAML or symlink the MSA into place."
+        )
+
+    def _stage(stem: str, query_seq: str) -> None:
+        a3m_out = (msa_staging_dir / f"{stem}.a3m").resolve()
+        write_variant_a3m(mut_msa_path, query_seq, a3m_out)
+        write_variant_yaml(
+            query_seq, str(a3m_out), mut_id, staging_dir / f"{stem}.yaml"
+        )
+
+    _stage(f"{base_stem}{BASELINE_SUFFIX}", mut_seq)
     for pos in mutated_positions:
         wt_aa = wt_seq[pos]
         reverted = mut_seq[:pos] + wt_aa + mut_seq[pos + 1 :]
-        write_variant_yaml(
-            reverted,
-            mut_msa,
-            mut_id,
-            staging_dir / f"{revert_stem(base_stem, pos, wt_aa)}.yaml",
-        )
+        _stage(revert_stem(base_stem, pos, wt_aa), reverted)
     n_variants = 1 + len(mutated_positions)
-    print(f"[occ] wrote {n_variants} variant YAMLs to {staging_dir}")
+    print(
+        f"[occ] wrote {n_variants} variant YAMLs to {staging_dir} "
+        f"+ patched MSAs in {msa_staging_dir}"
+    )
 
     # ---- Process all through Boltz
     data = check_inputs(staging_dir)
