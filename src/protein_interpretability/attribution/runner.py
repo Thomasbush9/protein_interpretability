@@ -169,6 +169,12 @@ def run_per_step(
                         f"discarded. Captured surfaces: {cap.captured_keys()}"
                     )
                 logits = cap.distogram
+                # Boltz2's distogram is (B, N, N, num_distograms, num_bins).
+                # Match boltz2.py:600 — only one distogram is implemented, so
+                # collapse the num_distograms dim by selecting index 0. Targets
+                # then see the expected (B, N, N, num_bins) shape.
+                if logits.ndim == 5:
+                    logits = logits[..., 0, :]
                 loss = target(logits, token_mask=token_mask)
                 loss.backward()
 
