@@ -159,12 +159,11 @@ class GradientCapture:
 
         def hook(_module: nn.Module, _inputs: Any, output: Any) -> None:
             tensor = _tensor_from_out(output)
-            if not tensor.requires_grad:
-                # Either grad is globally disabled or model is in eval+no_grad.
-                # Returning silently keeps forward-only flows working; the
-                # surface property will raise on access via .grad.
-                return
-            tensor.retain_grad()
+            # Mirror the Boltz2Extractor pattern: store unconditionally. The
+            # runner is responsible for checking requires_grad and producing a
+            # clear diagnostic if grad flow is broken.
+            if tensor.requires_grad:
+                tensor.retain_grad()
             if overwrite or key not in captured:
                 captured[key] = tensor
 

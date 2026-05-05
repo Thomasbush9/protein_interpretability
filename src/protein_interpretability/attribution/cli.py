@@ -259,6 +259,12 @@ def main() -> None:
         "all_targets": target_specs,
     }
 
+    # Match the forward-call pattern proven in extract_attention.py — Boltz's
+    # forward takes num_sampling_steps + diffusion_samples and may take a
+    # different code path without them. Sampling is downstream of distogram so
+    # cost here is only the diffusion overhead; we keep it minimal (1, 1).
+    forward_kwargs = {"num_sampling_steps": 1, "diffusion_samples": 1}
+
     for batch_idx, batch in enumerate(dataloader):
         batch = {
             k: v.to(device) if isinstance(v, torch.Tensor) else v
@@ -272,6 +278,7 @@ def main() -> None:
                 batch=batch,
                 target=target,
                 recycling_steps=recycling_steps,
+                forward_kwargs=forward_kwargs,
                 extra_provenance={"config": {**base_provenance, "target": spec}},
             )
             record_id = results[0].record_id

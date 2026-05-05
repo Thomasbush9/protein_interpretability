@@ -54,7 +54,7 @@ def run_per_step(
     results: list[AttributionResult] = []
     cap = GradientCapture(model)
 
-    with cap, torch.set_grad_enabled(True):
+    with cap, torch.enable_grad():
         for k in recycling_steps:
             cap.clear()
             for p in model.parameters():
@@ -64,6 +64,14 @@ def run_per_step(
             _ = model(batch, recycling_steps=int(k), **forward_kwargs)
 
             logits = cap.distogram
+            if not logits.requires_grad:
+                raise RuntimeError(
+                    "distogram tensor has requires_grad=False — Boltz forward "
+                    "is running under no_grad/inference_mode. Check that the "
+                    "model isn't in inference_mode and that the CLI sets "
+                    "torch.set_grad_enabled(True) before model(batch). "
+                    f"Captured surfaces: {cap.captured_keys()}"
+                )
             loss = target(logits, token_mask=token_mask)
             loss.backward()
 
