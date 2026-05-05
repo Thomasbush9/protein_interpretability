@@ -64,6 +64,30 @@ def _temporarily(obj, attr: str, value):
         setattr(obj, attr, old)
 
 
+@contextlib.contextmanager
+def _enable_param_grads(model: nn.Module):
+    """Temporarily set ``requires_grad=True`` on all model parameters.
+
+    Why: Boltz2's ``__init__`` freezes trunk parameters when the checkpoint's
+    ``structure_prediction_training`` flag is False (boltz2.py:352-358). With
+    no parameter on the forward path requiring grad, the trunk's output
+    tensors (including the distogram) have ``requires_grad=False`` regardless
+    of any context manager — that breaks attribution. Flipping the flag at
+    runtime is enough; we restore the original state after backward so the
+    model is unchanged for any subsequent caller.
+    """
+    saved: list[tuple[torch.Tensor, bool]] = []
+    for p in model.parameters():
+        saved.append((p, p.requires_grad))
+        if not p.requires_grad:
+            p.requires_grad_(True)
+    try:
+        yield
+    finally:
+        for p, was in saved:
+            p.requires_grad_(was)
+
+
 def run_per_step(
     model: nn.Module,
     batch: dict,
@@ -108,6 +132,7 @@ def run_per_step(
         cap,
         torch.enable_grad(),
         _neutralize_set_grad_enabled(),
+        _enable_param_grads(model),
         _temporarily(model, "skip_run_structure", True),
     ):
         for k in recycling_steps:
