@@ -175,6 +175,18 @@ def run_per_step(
                 # then see the expected (B, N, N, num_bins) shape.
                 if logits.ndim == 5:
                     logits = logits[..., 0, :]
+
+                if not logits.requires_grad:
+                    raise RuntimeError(
+                        "captured distogram doesn't require grad. "
+                        f"pair_leaf.requires_grad={pair_leaf.requires_grad}, "
+                        f"pair_leaf.grad_fn={pair_leaf.grad_fn}, "
+                        f"cap.distogram.requires_grad={cap.distogram.requires_grad}, "
+                        f"cap.distogram.grad_fn={cap.distogram.grad_fn}, "
+                        f"cap.distogram.shape={tuple(cap.distogram.shape)}, "
+                        f"global grad_enabled={torch.is_grad_enabled()}"
+                    )
+
                 loss = target(logits, token_mask=token_mask)
                 loss.backward()
 
