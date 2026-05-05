@@ -1,8 +1,11 @@
 """Per-step attribution runner: forward + backward at each recycling depth.
 
-Default capture mode (v1): one ``forward(recycling_steps=K)`` per K, fresh
-graph each time, gradients on query + MSA embedding only. Memory bounded to
-one forward.
+Pair-rep mode (default): one ``forward(recycling_steps=K)`` per K. All model
+parameters are frozen so the trunk runs without an autograd graph; a
+forward_pre_hook on ``distogram_module`` replaces its input ``z`` with a leaf
+that requires grad. Backward populates ``leaf.grad`` — that's the attribution
+on the final pair representation. Memory bounded to one trunk forward +
+distogram_module's tiny graph regardless of K.
 """
 
 from __future__ import annotations
@@ -82,22 +85,22 @@ def _temporarily(obj, attr: str, value):
 
 
 @contextlib.contextmanager
-def _enable_param_grads(model: nn.Module):
-    """Temporarily set ``requires_grad=True`` on all model parameters.
+def _freeze_all_params(model: nn.Module):
+    """Temporarily set ``requires_grad=False`` on all model parameters.
 
-    Why: Boltz2's ``__init__`` freezes trunk parameters when the checkpoint's
-    ``structure_prediction_training`` flag is False (boltz2.py:352-358). With
-    no parameter on the forward path requiring grad, the trunk's output
-    tensors (including the distogram) have ``requires_grad=False`` regardless
-    of any context manager — that breaks attribution. Flipping the flag at
-    runtime is enough; we restore the original state after backward so the
-    model is unchanged for any subsequent caller.
+    Standard interpretability practice: we don't want gradients on parameters,
+    only on the captured surface (the leaf injected at distogram_module's
+    input). Freezing all params keeps the trunk's autograd graph empty
+    regardless of whether the global grad state is on — no activations are
+    retained, peak memory drops by an order of magnitude.
+
+    Restore on exit so the model is unchanged for subsequent callers.
     """
     saved: list[tuple[torch.Tensor, bool]] = []
     for p in model.parameters():
         saved.append((p, p.requires_grad))
-        if not p.requires_grad:
-            p.requires_grad_(True)
+        if p.requires_grad:
+            p.requires_grad_(False)
     try:
         yield
     finally:
@@ -141,47 +144,52 @@ def run_per_step(
 
     results: list[AttributionResult] = []
     cap = GradientCapture(model)
+    cap.install_pair_rep_attribution()
 
     # Skip the diffusion sampling path — we only need the distogram (computed
-    # before diffusion). Saves a chunk of forward time and avoids any
-    # downstream structure_module assertions that expect ground-truth coords.
-    with (
-        cap,
-        torch.enable_grad(),
-        _enable_param_grads(model),
-        _train_mode_for_boltz_grads(model),
-        _temporarily(model, "skip_run_structure", True),
-    ):
-        for k in recycling_steps:
-            cap.clear()
-            for p in model.parameters():
-                if p.grad is not None:
-                    p.grad = None
+    # before diffusion). Saves forward time and avoids the downstream
+    # structure_module assertions that expect ground-truth coords.
+    try:
+        with (
+            torch.enable_grad(),
+            _freeze_all_params(model),
+            _train_mode_for_boltz_grads(model),
+            _temporarily(model, "skip_run_structure", True),
+        ):
+            for k in recycling_steps:
+                cap.clear()
 
-            _ = model(batch, recycling_steps=int(k), **forward_kwargs)
+                _ = model(batch, recycling_steps=int(k), **forward_kwargs)
 
-            logits = cap.distogram
-            if not logits.requires_grad:
-                raise RuntimeError(
-                    "distogram tensor has requires_grad=False even with "
-                    "torch.set_grad_enabled neutralised — something else in "
-                    "the forward path is disabling grad. "
-                    f"Captured surfaces: {cap.captured_keys()}"
+                pair_leaf = cap.pair_input
+                if not pair_leaf.requires_grad:
+                    raise RuntimeError(
+                        "pair_input leaf doesn't require grad — pre-hook on "
+                        "distogram_module didn't fire or replacement was "
+                        f"discarded. Captured surfaces: {cap.captured_keys()}"
+                    )
+                logits = cap.distogram
+                loss = target(logits, token_mask=token_mask)
+                loss.backward()
+
+                results.append(
+                    _build_result(
+                        record_id=record_id,
+                        recycling_steps=int(k),
+                        loss_value=float(loss.detach().cpu()),
+                        target=target,
+                        cap=cap,
+                        token_mask=token_mask,
+                        extra_provenance=extra_provenance,
+                    )
                 )
-            loss = target(logits, token_mask=token_mask)
-            loss.backward()
 
-            results.append(
-                _build_result(
-                    record_id=record_id,
-                    recycling_steps=int(k),
-                    loss_value=float(loss.detach().cpu()),
-                    target=target,
-                    cap=cap,
-                    token_mask=token_mask,
-                    extra_provenance=extra_provenance,
-                )
-            )
+                # Free GPU memory between K iterations — backward graph + leaf
+                # are now CPU-side in the result; no reason to keep them on device.
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+    finally:
+        cap.remove()
 
     return results
 
@@ -196,38 +204,39 @@ def _build_result(
     token_mask: torch.Tensor | None,
     extra_provenance: dict | None,
 ) -> AttributionResult:
-    query_t = cap.query_emb
-    msa_t = cap.get(GradientCapture.MSA_KEY)
+    pair_t = cap.pair_input
+    pair_grad = _grad_or_zero(pair_t).detach().cpu()
+    pair_input = pair_t.detach().cpu()
 
-    query_grad = _grad_or_zero(query_t).detach().cpu()
-    query_input = query_t.detach().cpu()
-    if msa_t is not None:
-        msa_grad = _grad_or_zero(msa_t).detach().cpu()
-        msa_input = msa_t.detach().cpu()
-    else:
-        msa_grad = None
-        msa_input = None
-
+    n = pair_grad.shape[1] if pair_grad.ndim >= 3 else None
     if token_mask is not None:
         mask_cpu = token_mask.detach().cpu().bool()
+    elif n is not None:
+        mask_cpu = torch.ones(pair_grad.shape[0], n, dtype=torch.bool)
     else:
-        mask_cpu = torch.ones(query_grad.shape[:-1], dtype=torch.bool)
+        mask_cpu = torch.ones(1, dtype=torch.bool)
 
-    if mask_cpu is not None and query_grad.shape[:-1] == mask_cpu.shape:
-        invalid = ~mask_cpu
-        query_grad[invalid] = 0
-        query_input[invalid] = 0
+    # Zero out attribution at padded (i, j) pair positions so downstream
+    # consumers don't pick up garbage outside the real protein.
+    if (
+        pair_grad.ndim == 4
+        and mask_cpu.ndim == 2
+        and pair_grad.shape[:2] == mask_cpu.shape
+    ):
+        valid = mask_cpu  # (B, N)
+        pair_mask = valid[:, :, None] & valid[:, None, :]  # (B, N, N)
+        invalid = ~pair_mask
+        pair_grad[invalid] = 0
+        pair_input[invalid] = 0
 
     return AttributionResult(
         record_id=record_id,
         recycling_steps=recycling_steps,
         target_value=loss_value,
         target_spec=target.spec(),
-        query_grad=query_grad,
-        query_input=query_input,
-        msa_grad=msa_grad,
-        msa_input=msa_input,
         token_mask=mask_cpu,
+        pair_grad=pair_grad,
+        pair_input=pair_input,
         provenance=collect_provenance(extra=extra_provenance),
     )
 

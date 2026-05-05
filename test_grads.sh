@@ -18,18 +18,15 @@ mkdir -p "$TRITON_CACHE_DIR"
 # Mitigate H100 fragmentation under the heavier backward graph.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-# The wrapper bootstraps sys.path, so no -m / PYTHONPATH gymnastics needed.
-#
-# If this OOMs at K=10, escape valves in order of least-disruptive:
-#   1. Drop --recycling_steps to "0,5" (skip K=10 — heaviest single forward).
-#   2. Remove --no_kernels — fused triangle attention has working backward via
-#      trifast/cuequivariance and uses far less activation memory than eager.
-#   3. Drop to a single K, e.g. --recycling_steps 0.
+# Pair-rep gradient attribution: backward only flows through distogram_module
+# (one Linear), with all model parameters frozen. The trunk has no autograd
+# graph at all, so memory is bounded regardless of K. Fused triangle attention
+# kernels (trifast / cuequivariance_torch) are used — they have working
+# backward (Boltz trains with them) and never materialise the softmax matrix.
 python "$REPO_ROOT/scripts/run_attribution_single.py" \
     /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p40/outputs/sequences/seq_00132/seq_00132.yaml \
     --out_dir /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/grad_att \
     --cache /n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/boltz_db \
     --target contact:65,202 \
     --target mean_contact \
-    --recycling_steps 0,5,10 \
-    --no_kernels
+    --recycling_steps 0,5,10

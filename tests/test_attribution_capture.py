@@ -126,7 +126,43 @@ def test_capture_grad_flows_to_query_and_msa() -> None:
         assert cap.msa_emb.grad.abs().sum() > 0
 
 
-def test_run_per_step_returns_one_result_per_K() -> None:
+def test_pair_rep_pre_hook_replaces_input_with_leaf() -> None:
+    model = _MockBoltz().eval()
+    batch = _make_batch()
+    cap = GradientCapture(model)
+    cap.install_pair_rep_attribution()
+    try:
+        with torch.set_grad_enabled(True):
+            _ = model(batch, recycling_steps=1)
+        assert "pair_input" in cap.captured_keys()
+        assert "distogram" in cap.captured_keys()
+        assert cap.pair_input.is_leaf, "captured pair_input must be a leaf"
+        assert cap.pair_input.requires_grad
+        # distogram should sit on the autograd graph rooted at pair_input.
+        assert cap.distogram.requires_grad
+    finally:
+        cap.remove()
+
+
+def test_pair_rep_backward_populates_leaf_grad() -> None:
+    model = _MockBoltz().eval()
+    batch = _make_batch()
+    target = ContactBinNLL(pair_i=2, pair_j=7)
+
+    cap = GradientCapture(model)
+    cap.install_pair_rep_attribution()
+    try:
+        with torch.set_grad_enabled(True):
+            _ = model(batch, recycling_steps=1)
+            loss = target(cap.distogram, token_mask=batch["token_pad_mask"])
+            loss.backward()
+        assert cap.pair_input.grad is not None
+        assert cap.pair_input.grad.abs().sum() > 0
+    finally:
+        cap.remove()
+
+
+def test_run_per_step_returns_one_pair_result_per_K() -> None:
     model = _MockBoltz().eval()
     batch = _make_batch()
     target = ContactBinNLL(pair_i=2, pair_j=7)
@@ -141,23 +177,29 @@ def test_run_per_step_returns_one_result_per_K() -> None:
     for r, expected_k in zip(results, (0, 1, 2)):
         assert isinstance(r, AttributionResult)
         assert r.recycling_steps == expected_k
-        assert r.query_grad.shape == r.query_input.shape
-        assert r.query_grad.abs().sum() > 0
-        assert r.msa_grad is not None
-        assert r.msa_grad.shape == r.msa_input.shape
+        # Pair-rep mode populates pair_*; legacy query_*/msa_* are None.
+        assert r.pair_grad is not None
+        assert r.pair_input is not None
+        assert r.pair_grad.shape == r.pair_input.shape
+        assert r.pair_grad.abs().sum() > 0
+        assert r.query_grad is None
+        assert r.msa_grad is None
         assert torch.isfinite(torch.tensor(r.target_value))
 
 
-def test_run_per_step_zeros_gradient_at_padded_positions() -> None:
+def test_run_per_step_zeros_pair_grad_at_padded_positions() -> None:
     model = _MockBoltz().eval()
     batch = _make_batch()
     batch["token_pad_mask"][:, -2:] = False  # mask last two tokens
-
     target = ContactBinNLL(pair_i=2, pair_j=7)
-    results = run_per_step(model=model, batch=batch, target=target, recycling_steps=(0,))
-    r = results[0]
-    assert torch.all(r.query_grad[:, -2:, :] == 0)
-    assert torch.all(r.query_input[:, -2:, :] == 0)
+
+    [r] = run_per_step(model=model, batch=batch, target=target, recycling_steps=(0,))
+    # pair_grad shape: (B, N, N, D_pair). Any pair touching the masked positions
+    # at indices [-2:] on either axis must be zero.
+    assert torch.all(r.pair_grad[:, -2:, :, :] == 0)
+    assert torch.all(r.pair_grad[:, :, -2:, :] == 0)
+    assert torch.all(r.pair_input[:, -2:, :, :] == 0)
+    assert torch.all(r.pair_input[:, :, -2:, :] == 0)
 
 
 def test_save_load_round_trip(tmp_path) -> None:
@@ -171,10 +213,11 @@ def test_save_load_round_trip(tmp_path) -> None:
 
     assert loaded.recycling_steps == r.recycling_steps
     assert loaded.target_spec == r.target_spec
-    assert torch.equal(loaded.query_grad, r.query_grad)
-    assert torch.equal(loaded.query_input, r.query_input)
-    assert torch.equal(loaded.msa_grad, r.msa_grad)
+    assert torch.equal(loaded.pair_grad, r.pair_grad)
+    assert torch.equal(loaded.pair_input, r.pair_input)
     assert torch.equal(loaded.token_mask, r.token_mask)
+    assert loaded.query_grad is None
+    assert loaded.msa_grad is None
 
 
 def test_capture_fails_loudly_without_required_attrs() -> None:
@@ -183,11 +226,11 @@ def test_capture_fails_loudly_without_required_attrs() -> None:
 
     cap = GradientCapture(_Bare())
     try:
-        cap.install()
+        cap.install_pair_rep_attribution()
     except AttributeError as e:
-        assert "input_embedder" in str(e)
+        assert "distogram_module" in str(e)
         return
-    raise AssertionError("expected AttributeError on missing input_embedder")
+    raise AssertionError("expected AttributeError on missing distogram_module")
 
 
 def test_input_x_grad_helper() -> None:
@@ -195,8 +238,6 @@ def test_input_x_grad_helper() -> None:
     batch = _make_batch()
     target = ContactBinNLL(pair_i=2, pair_j=7)
     [r] = run_per_step(model=model, batch=batch, target=target, recycling_steps=(0,))
-    qxg = r.input_x_grad("query")
-    mxg = r.input_x_grad("msa")
-    assert qxg.shape == r.query_grad.shape
-    assert mxg.shape == r.msa_grad.shape
-    assert torch.allclose(qxg, r.query_input * r.query_grad)
+    pxg = r.input_x_grad("pair")
+    assert pxg.shape == r.pair_grad.shape
+    assert torch.allclose(pxg, r.pair_input * r.pair_grad)

@@ -17,7 +17,8 @@ from typing import Any
 
 import torch
 
-SCHEMA_VERSION = "attribution_v1"
+SCHEMA_VERSION = "attribution_v2"
+_SUPPORTED_SCHEMA_VERSIONS = ("attribution_v1", "attribution_v2")
 
 
 @dataclass
@@ -28,23 +29,39 @@ class AttributionResult:
     fields hold the surface activations themselves (post-forward, pre-backward)
     so downstream analysis can compute ``input × gradient`` without re-running
     the model.
+
+    Pair-rep mode (default in v2): only ``pair_grad`` / ``pair_input`` are
+    populated (gradient at distogram_module's input — the final pair
+    representation). ``query_*`` and ``msa_*`` are ``None`` because the trunk
+    has no autograd graph in this mode.
+
+    Legacy mode (v1, mock-model tests only): ``query_*`` and ``msa_*`` are
+    populated; ``pair_*`` are ``None``.
     """
 
     record_id: str
     recycling_steps: int
     target_value: float
     target_spec: dict
-    query_grad: torch.Tensor                # (B, N, D_s)
-    query_input: torch.Tensor               # (B, N, D_s)
-    msa_grad: torch.Tensor | None           # (B, S, N, D_m) or None
-    msa_input: torch.Tensor | None
     token_mask: torch.Tensor                # (B, N) bool
+    query_grad: torch.Tensor | None = None  # (B, N, D_s) or None
+    query_input: torch.Tensor | None = None
+    msa_grad: torch.Tensor | None = None    # (B, S, N, D_m) or None
+    msa_input: torch.Tensor | None = None
+    pair_grad: torch.Tensor | None = None   # (B, N, N, D_z) or None
+    pair_input: torch.Tensor | None = None
     provenance: dict = field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
 
-    def input_x_grad(self, surface: str = "query") -> torch.Tensor:
+    def input_x_grad(self, surface: str = "pair") -> torch.Tensor:
         """Element-wise input×gradient on a chosen surface."""
+        if surface == "pair":
+            if self.pair_input is None or self.pair_grad is None:
+                raise ValueError("pair surface not captured for this result")
+            return self.pair_input * self.pair_grad
         if surface == "query":
+            if self.query_input is None or self.query_grad is None:
+                raise ValueError("query surface not captured for this result")
             return self.query_input * self.query_grad
         if surface == "msa":
             if self.msa_input is None or self.msa_grad is None:
@@ -53,22 +70,20 @@ class AttributionResult:
         raise ValueError(f"unknown surface: {surface!r}")
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        d["query_grad"] = self.query_grad
-        d["query_input"] = self.query_input
-        d["msa_grad"] = self.msa_grad
-        d["msa_input"] = self.msa_input
-        d["token_mask"] = self.token_mask
-        return d
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "AttributionResult":
         version = d.get("schema_version", "unknown")
-        if version != SCHEMA_VERSION:
+        if version not in _SUPPORTED_SCHEMA_VERSIONS:
             raise ValueError(
-                f"schema version mismatch: file has {version!r}, code expects "
-                f"{SCHEMA_VERSION!r}"
+                f"schema version {version!r} not supported. Code expects one "
+                f"of {_SUPPORTED_SCHEMA_VERSIONS}."
             )
+        # v1 files lack pair_* fields; default them to None and pass through.
+        d = {**d}
+        d.setdefault("pair_grad", None)
+        d.setdefault("pair_input", None)
         return cls(**d)
 
 
