@@ -10,6 +10,7 @@ from protein_interpretability.attribution.targets import (
     DEFAULT_NUM_BINS,
     ContactBinNLL,
     DistogramKL,
+    MeanContactNLL,
     PairLogProb,
 )
 
@@ -103,3 +104,40 @@ def test_target_spec_round_trip() -> None:
     assert spec["pair_i"] == 3
     assert spec["pair_j"] == 10
     assert len(spec["contact_bins"]) == DEFAULT_CONTACT_BIN_HI
+
+
+def test_mean_contact_nll_returns_scalar(logits: torch.Tensor) -> None:
+    target = MeanContactNLL()
+    loss = target(logits)
+    assert loss.shape == ()
+    assert loss.requires_grad
+    assert torch.isfinite(loss)
+
+
+def test_mean_contact_nll_grad_spreads_across_pairs(logits: torch.Tensor) -> None:
+    target = MeanContactNLL()
+    loss = target(logits)
+    loss.backward()
+    g = logits.grad[0]                              # (N, N, K)
+    nz = (g.abs().sum(dim=-1) > 0)                  # (N, N)
+    n = g.shape[0]
+    eye = torch.eye(n, dtype=torch.bool)
+    # Every off-diagonal pair should receive gradient (single-pair grad would
+    # leave most pairs zero — that's the whole-output difference).
+    assert nz[~eye].all(), "expected non-zero gradient on every off-diagonal pair"
+    assert not nz.diag().any(), "diagonal must be excluded"
+
+
+def test_mean_contact_nll_token_mask_excludes_padded_pairs(logits: torch.Tensor) -> None:
+    mask = torch.ones(1, logits.shape[1], dtype=torch.bool)
+    mask[0, 5] = False
+    target = MeanContactNLL()
+    loss_full = target(logits)
+    loss_masked = target(logits, token_mask=mask)
+    # Different denominator and excluded contributions → loss must change.
+    assert loss_masked.item() != pytest.approx(loss_full.item())
+    loss_masked.backward()
+    g = logits.grad[0]
+    # Padded position (5) must receive no gradient at any pair (5, *) or (*, 5).
+    assert g[5].abs().sum() == 0
+    assert g[:, 5].abs().sum() == 0

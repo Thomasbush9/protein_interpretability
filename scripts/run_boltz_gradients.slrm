@@ -1,0 +1,66 @@
+#!/bin/bash
+#SBATCH --job-name=boltz_gradients
+#SBATCH --nodes=1
+#SBATCH --partition=kempner_h100
+#SBATCH --account=kempner_bsabatini_lab
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gpus-per-node=1
+#SBATCH --mem=128GB
+#SBATCH --time=12:00:00
+#SBATCH --output=/n/home06/tbush/job_logs/%x.%A_%a.out
+
+# ===========================================================================
+# Boltz2 gradient attribution (orchestrator version)
+#
+# Wraps scripts/run_boltz_gradients.py so it runs non-interactively under
+# SLURM. All extraction parameters (input/output dirs, target,
+# recycling_steps, num_gpus) are read from the YAML config — edit the config,
+# not this script.
+#
+# Usage:
+#   sbatch scripts/run_boltz_gradients.slrm                            # uses scripts/boltz_gradients_config.yaml
+#   sbatch scripts/run_boltz_gradients.slrm /abs/path/my_config.yaml
+#
+# IMPORTANT: keep --gpus-per-node in sync with runtime.num_gpus in the
+# config — the orchestrator launches one subprocess per GPU.
+# ===========================================================================
+
+set -euo pipefail
+
+# ---- Paths ----
+REPO_ROOT="/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability"
+CONFIG_PATH="${1:-$REPO_ROOT/scripts/boltz_gradients_config.yaml}"
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+    echo "ERROR: config not found: $CONFIG_PATH" >&2
+    exit 1
+fi
+
+# ---- Environment (module load + mamba activate boltz) ----
+source "$REPO_ROOT/scripts/prepare_env.sh"
+
+export PYTHONPATH="$REPO_ROOT/src:${PYTHONPATH:-}"
+
+# ---- Runtime tuning ----
+export CUEQ_DEFAULT_CONFIG="${CUEQ_DEFAULT_CONFIG:-1}"
+export CUEQ_DISABLE_AOT_TUNING="${CUEQ_DISABLE_AOT_TUNING:-1}"
+
+JOB_ID="${SLURM_JOB_ID:-manual}"
+export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_cache_${USER}_${JOB_ID}"
+mkdir -p "$TRITON_CACHE_DIR"
+
+echo "==============================================="
+echo "Boltz2 Gradient Attribution (orchestrator)"
+echo "==============================================="
+echo "  Repo:       $REPO_ROOT"
+echo "  Config:     $CONFIG_PATH"
+echo "  GPUs:       ${SLURM_GPUS_ON_NODE:-?}"
+echo "  PYTHONPATH: $PYTHONPATH"
+echo "  Triton:     $TRITON_CACHE_DIR"
+echo "==============================================="
+
+python "$REPO_ROOT/scripts/run_boltz_gradients.py" --config "$CONFIG_PATH"
+
+echo ""
+echo "[$(date +%H:%M:%S)] Done."

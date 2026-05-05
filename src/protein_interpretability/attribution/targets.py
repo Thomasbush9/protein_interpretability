@@ -121,6 +121,48 @@ class PairLogProb:
 
 
 @dataclass
+class MeanContactNLL:
+    """Whole-distogram mean contact NLL — average ContactBinNLL over all valid pairs.
+
+    Loss = mean_{i<j, valid} (-log Σ_{b ∈ contact_bins} softmax(logits[..., i, j, :])[b])
+
+    Use case: "what input drives the model's contact-prediction confidence
+    across the whole structure?" — a diffuse counterpart to ContactBinNLL.
+    Diagonal (i == j) is excluded; padded positions are masked out.
+    """
+
+    contact_bins: tuple[int, ...] = field(
+        default_factory=lambda: tuple(range(DEFAULT_CONTACT_BIN_HI))
+    )
+
+    def __call__(
+        self,
+        logits: torch.Tensor,
+        token_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=-1)  # (..., N, N, K)
+        bin_idx = torch.tensor(self.contact_bins, device=logits.device, dtype=torch.long)
+        log_p_contact = torch.logsumexp(log_probs.index_select(-1, bin_idx), dim=-1)  # (..., N, N)
+
+        n = log_p_contact.shape[-1]
+        eye = torch.eye(n, dtype=torch.bool, device=log_p_contact.device)
+        pair_mask = ~eye
+        if token_mask is not None:
+            valid = token_mask.bool()
+            pair_mask = pair_mask & valid[..., None] & valid[..., None, :]
+
+        nll = -log_p_contact * pair_mask
+        denom = pair_mask.sum().clamp(min=1).to(nll.dtype)
+        return nll.sum() / denom
+
+    def spec(self) -> dict:
+        return {
+            "kind": "MeanContactNLL",
+            "contact_bins": list(self.contact_bins),
+        }
+
+
+@dataclass
 class DistogramKL:
     """KL(p_pred || p_ref) summed across all valid (i, j) pairs.
 

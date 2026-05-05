@@ -1,0 +1,3 @@
+# One seq_id per line. Comments allowed (lines starting with '#').
+# Replace this with an actual seq_id from sequences_dir before launching.
+seq_18553

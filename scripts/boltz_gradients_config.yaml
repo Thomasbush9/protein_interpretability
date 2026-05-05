@@ -1,0 +1,53 @@
+# Configuration for scripts/run_boltz_gradients.py
+#
+# Reuses the existing p40 mutant cohort. We already know these queries get
+# near-WT predictions; the question gradient attribution answers is whether
+# the query is even used (R0 vs R10 attribution at residues that were
+# actually mutated).
+#
+# Same input layout as boltz_attention_config.yaml.
+
+input:
+  # Existing p40 mutant YAMLs.
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p40/outputs/sequences
+
+  # First run: just one sequence. Edit gradients_subset.txt to pick a different seq_id.
+  # Path is resolved relative to this config file when relative.
+  subset_file: gradients_subset.txt
+
+output:
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p40/gradients
+  staging_dir: null
+
+boltz:
+  cache: /n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/boltz_db
+  seed: null
+  checkpoint: null
+  # Disable fused CUDA kernels — required for grad runs (some custom kernels
+  # have no backward / break autograd).
+  no_kernels: true
+
+# Attribution parameters.
+#   targets          — list of target specs; CLI runs one forward+backward per
+#                      (record, K, target). Forms:
+#                        contact:i,j        (ContactBinNLL on pair (i,j), 0-indexed)
+#                        mean_contact       (MeanContactNLL — whole-distogram mean)
+#                        pair_bin:i,j,b     (PairLogProb on bin b for pair (i,j))
+#   recycling_steps  — list of K values to evaluate per record.
+attribution:
+  targets:
+    # (1) Sharp local question — single contact in the chromophore pocket.
+    #     Y66 ↔ T203 in 1-indexed avGFP = (65, 202) in 0-indexed.
+    - "contact:65,202"
+    # (2) Diffuse "is the input used at all" — whole-distogram contact NLL.
+    - "mean_contact"
+  recycling_steps: [0, 5, 10]
+
+runtime:
+  num_gpus: 1
+  accelerator: gpu
+  num_workers: 2
+  python: python
+  env:
+    CUEQ_DEFAULT_CONFIG: "1"
+    CUEQ_DISABLE_AOT_TUNING: "1"

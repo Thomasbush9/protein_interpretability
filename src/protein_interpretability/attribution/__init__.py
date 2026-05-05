@@ -20,6 +20,7 @@ from .targets import (
     AttributionTarget,
     ContactBinNLL,
     DistogramKL,
+    MeanContactNLL,
     PairLogProb,
 )
 
@@ -31,6 +32,7 @@ __all__ = [
     "DEFAULT_NUM_BINS",
     "DistogramKL",
     "GradientCapture",
+    "MeanContactNLL",
     "PairLogProb",
     "SCHEMA_VERSION",
     "collect_provenance",

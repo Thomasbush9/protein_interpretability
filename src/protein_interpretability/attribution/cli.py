@@ -1,15 +1,16 @@
 """Single-record CLI: forward + backward at chosen K values, save .pt per step.
 
-Mirrors ``protein_interpretability.extract_attention`` but for gradient
-attribution. Multi-GPU orchestration lives in ``scripts/run_boltz_gradients.py``
-(chunk 2).
+Mirrors :mod:`protein_interpretability.extract_attention` but for gradient
+attribution. Multi-GPU orchestration lives in
+``scripts/run_boltz_gradients.py`` (chunk 2).
 
 Usage::
 
-    python -m protein_interpretability.attribution.cli input.yaml \
-        --out_dir ./attribution_output \
-        --target contact:128,142 \
-        --recycling_steps 0,5,10 \
+    # Activate the boltz env first (cluster: source scripts/prepare_env.sh)
+    python -m protein_interpretability.attribution.cli input.yaml \\
+        --out_dir ./attribution_output \\
+        --target contact:65,202 \\
+        --recycling_steps 0,5,10 \\
         --no_kernels
 """
 
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import gc
+import os
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 
@@ -29,6 +32,7 @@ from .targets import (
     DEFAULT_CONTACT_BIN_HI,
     AttributionTarget,
     ContactBinNLL,
+    MeanContactNLL,
     PairLogProb,
 )
 
@@ -50,11 +54,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--target",
-        type=str,
+        action="append",
         required=True,
         help=(
-            "Target spec. Supported forms: "
-            "'contact:i,j' (ContactBinNLL on pair (i,j)); "
+            "Target spec; may be repeated to run multiple targets per record. "
+            "Supported forms: "
+            "'contact:i,j' (ContactBinNLL on pair (i,j), 0-indexed); "
+            "'mean_contact' (MeanContactNLL — whole-distogram contact NLL); "
             "'pair_bin:i,j,b' (PairLogProb on bin b for pair (i,j))."
         ),
     )
@@ -82,6 +88,8 @@ def parse_target(spec: str) -> AttributionTarget:
         return ContactBinNLL(
             pair_i=i, pair_j=j, contact_bins=tuple(range(DEFAULT_CONTACT_BIN_HI))
         )
+    if kind == "mean_contact":
+        return MeanContactNLL(contact_bins=tuple(range(DEFAULT_CONTACT_BIN_HI)))
     if kind == "pair_bin":
         if len(parts) != 3:
             raise ValueError("pair_bin target needs 'i,j,b'")
@@ -90,16 +98,35 @@ def parse_target(spec: str) -> AttributionTarget:
     raise ValueError(f"unknown target kind: {kind!r}")
 
 
+def target_short_name(spec: str) -> str:
+    """Filename-safe short name for a target spec."""
+    kind, _, body = spec.partition(":")
+    if not body:
+        return kind
+    return kind + "_" + body.replace(",", "_")
+
+
 def main() -> None:
     args = parse_args()
+
+    warnings.filterwarnings(
+        "ignore", ".*that has Tensor Cores. To properly utilize them.*"
+    )
+    torch.set_grad_enabled(True)
+    torch.set_float32_matmul_precision("highest")
 
     if args.seed is not None:
         seed_everything(args.seed)
 
+    for key in ["CUEQ_DEFAULT_CONFIG", "CUEQ_DISABLE_AOT_TUNING"]:
+        os.environ[key] = os.environ.get(key, "1")
+
     # Lazy imports — Boltz is heavyweight and only needed at runtime.
     from boltz.data.module.inferencev2 import Boltz2InferenceDataModule
+    from boltz.data.types import Manifest
     from boltz.main import (
         Boltz2DiffusionParams,
+        BoltzProcessedInput,
         BoltzSteeringParams,
         MSAModuleArgs,
         PairformerArgsV2,
@@ -109,33 +136,72 @@ def main() -> None:
         process_inputs,
     )
     from boltz.model.models.boltz2 import Boltz2
+    from rdkit import Chem
+
+    Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
     cache = Path(args.cache).expanduser()
     cache.mkdir(parents=True, exist_ok=True)
     download_boltz2(cache)
 
-    out_dir = Path(args.out_dir).expanduser()
+    data_path = Path(args.data).expanduser()
+    out_dir = Path(args.out_dir).expanduser() / f"boltz_results_{data_path.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    target = parse_target(args.target)
+    grad_dir = out_dir / "gradients"
+    grad_dir.mkdir(parents=True, exist_ok=True)
+
+    target_specs: list[str] = list(args.target)
+    targets: list[tuple[str, AttributionTarget]] = [
+        (spec, parse_target(spec)) for spec in target_specs
+    ]
     recycling_steps = [int(x) for x in args.recycling_steps.split(",") if x.strip()]
     if not recycling_steps:
         raise SystemExit("--recycling_steps must list at least one K value")
 
-    data = check_inputs(Path(args.data).expanduser())
-    data = filter_inputs_structure(data, out_dir, override=False)
-    if not data:
-        print("No new inputs to process — all outputs already exist.")
-        return
-    processed = process_inputs(
+    data = check_inputs(data_path)
+    ccd_path = cache / "ccd.pkl"
+    mol_dir = cache / "mols"
+
+    process_inputs(
         data=data,
         out_dir=out_dir,
-        ccd_path=cache / "ccd.pkl",
-        mol_dir=cache / "mols",
+        ccd_path=ccd_path,
+        mol_dir=mol_dir,
         use_msa_server=args.use_msa_server,
         msa_server_url=args.msa_server_url,
+        msa_pairing_strategy="greedy",
+        boltz2=True,
     )
-    mol_dir = cache / "mols"
+
+    manifest = Manifest.load(out_dir / "processed" / "manifest.json")
+    filtered_manifest = filter_inputs_structure(
+        manifest=manifest, outdir=out_dir, override=True
+    )
+
+    processed_dir = out_dir / "processed"
+    processed = BoltzProcessedInput(
+        manifest=filtered_manifest,
+        targets_dir=processed_dir / "structures",
+        msa_dir=processed_dir / "msa",
+        constraints_dir=(
+            (processed_dir / "constraints")
+            if (processed_dir / "constraints").exists()
+            else None
+        ),
+        template_dir=(
+            (processed_dir / "templates")
+            if (processed_dir / "templates").exists()
+            else None
+        ),
+        extra_mols_dir=(
+            (processed_dir / "mols") if (processed_dir / "mols").exists() else None
+        ),
+    )
+
+    if not filtered_manifest.records:
+        print("No inputs to process.")
+        return
 
     data_module = Boltz2InferenceDataModule(
         manifest=processed.manifest,
@@ -186,11 +252,11 @@ def main() -> None:
     data_module.setup(stage="predict")
     dataloader = data_module.predict_dataloader()
 
-    config_for_provenance = {
-        "target": args.target,
+    base_provenance = {
         "recycling_steps": recycling_steps,
         "no_kernels": args.no_kernels,
         "checkpoint": str(checkpoint),
+        "all_targets": target_specs,
     }
 
     for batch_idx, batch in enumerate(dataloader):
@@ -198,25 +264,31 @@ def main() -> None:
             k: v.to(device) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
         }
-        results = run_per_step(
-            model=model,
-            batch=batch,
-            target=target,
-            recycling_steps=recycling_steps,
-            extra_provenance={"config": config_for_provenance},
-        )
-        record_id = results[0].record_id
-        for r in results:
-            path = out_dir / f"{record_id}_attribution_R{r.recycling_steps}.pt"
-            save_result(r, path)
-            print(
-                f"[{batch_idx + 1}] {record_id} R={r.recycling_steps} "
-                f"loss={r.target_value:.4f} -> {path}"
+
+        for spec, target in targets:
+            short = target_short_name(spec)
+            results = run_per_step(
+                model=model,
+                batch=batch,
+                target=target,
+                recycling_steps=recycling_steps,
+                extra_provenance={"config": {**base_provenance, "target": spec}},
             )
+            record_id = results[0].record_id
+            for r in results:
+                path = grad_dir / f"{record_id}_attribution_R{r.recycling_steps}_{short}.pt"
+                save_result(r, path)
+                print(
+                    f"[{batch_idx + 1}/{len(dataloader)}] {record_id} "
+                    f"target={spec} R={r.recycling_steps} loss={r.target_value:.4f} "
+                    f"-> {path}"
+                )
 
         gc.collect()
         if device.type == "cuda":
             torch.cuda.empty_cache()
+
+    print(f"\nDone. Gradients saved to {grad_dir}")
 
 
 if __name__ == "__main__":
