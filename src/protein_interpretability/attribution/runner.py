@@ -18,36 +18,53 @@ from .io import AttributionResult, collect_provenance
 from .targets import AttributionTarget
 
 
-class _NoOpGradContext:
-    """Drop-in replacement for ``torch.set_grad_enabled`` that does nothing."""
-
-    def __init__(self, *_args, **_kwargs) -> None:
-        pass
-
-    def __enter__(self) -> "_NoOpGradContext":
-        return self
-
-    def __exit__(self, *_exc) -> None:
-        return None
-
-
 @contextlib.contextmanager
-def _neutralize_set_grad_enabled():
-    """Make ``torch.set_grad_enabled`` a no-op for the duration of the block.
+def _train_mode_for_boltz_grads(model: nn.Module):
+    """Make Boltz2's grad gates evaluate True only on the last recycle.
 
-    Why: Boltz2.forward wraps the trunk in
-    ``with torch.set_grad_enabled(self.training and self.structure_prediction_training)``
-    which evaluates to False under ``model.eval()`` and kills our backward
-    graph. Neutralising the call leaves the global grad state to whatever the
-    outer ``torch.enable_grad()`` set — exactly what we need. Other
-    ``torch.no_grad()`` blocks in diffusion are unaffected (different API).
+    Boltz2.forward gates grads three ways (boltz2.py:411, 440, 550–583):
+      - L411 (outer):   ``set_grad_enabled(self.training and self.structure_prediction_training)``
+      - L440 (inner):   ``set_grad_enabled(... and (i == recycling_steps))``
+      - L550–583 (post-distogram): ``if self.training: ...`` branches that
+        require ``feats["coords"]``.
+
+    With ``model.eval()`` (default), the outer + inner gates evaluate False
+    and our backward graph is dead. Neutralising ``set_grad_enabled``
+    altogether forces grads on for *every* recycle iteration, which OOMs at
+    K≥5 because Boltz's whole design assumes only the last recycle is on the
+    autograd graph.
+
+    Right fix: temporarily set ``training=True`` + ``structure_prediction_training=True``
+    so Boltz's gates evaluate correctly (outer True, inner True only on last
+    recycle). Then a post-hook on ``distogram_module`` flips both back to
+    False *immediately after distogram is computed* so the post-distogram
+    branches at L550–583 don't fire (they'd crash on missing coords).
     """
-    saved = torch.set_grad_enabled
-    torch.set_grad_enabled = _NoOpGradContext
+    original_training = model.training
+    has_struct = hasattr(model, "structure_prediction_training")
+    original_struct = getattr(model, "structure_prediction_training", None)
+
+    def _flip_back(_mod, _inp, _out):
+        model.training = False
+        if has_struct:
+            model.structure_prediction_training = False
+
+    distogram_module = getattr(model, "distogram_module", None)
+    if distogram_module is None:
+        raise AttributeError("model has no .distogram_module")
+    handle = distogram_module.register_forward_hook(_flip_back)
+
+    model.training = True
+    if has_struct:
+        model.structure_prediction_training = True
+
     try:
         yield
     finally:
-        torch.set_grad_enabled = saved
+        handle.remove()
+        model.training = original_training
+        if has_struct:
+            model.structure_prediction_training = original_struct
 
 
 @contextlib.contextmanager
@@ -131,8 +148,8 @@ def run_per_step(
     with (
         cap,
         torch.enable_grad(),
-        _neutralize_set_grad_enabled(),
         _enable_param_grads(model),
+        _train_mode_for_boltz_grads(model),
         _temporarily(model, "skip_run_structure", True),
     ):
         for k in recycling_steps:

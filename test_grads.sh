@@ -15,7 +15,16 @@ export CUEQ_DISABLE_AOT_TUNING="${CUEQ_DISABLE_AOT_TUNING:-1}"
 export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${SLURM_TMPDIR:-/tmp}/triton_cache_${USER}_$$}"
 mkdir -p "$TRITON_CACHE_DIR"
 
+# Mitigate H100 fragmentation under the heavier backward graph.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 # The wrapper bootstraps sys.path, so no -m / PYTHONPATH gymnastics needed.
+#
+# If this OOMs at K=10, escape valves in order of least-disruptive:
+#   1. Drop --recycling_steps to "0,5" (skip K=10 — heaviest single forward).
+#   2. Remove --no_kernels — fused triangle attention has working backward via
+#      trifast/cuequivariance and uses far less activation memory than eager.
+#   3. Drop to a single K, e.g. --recycling_steps 0.
 python "$REPO_ROOT/scripts/run_attribution_single.py" \
     /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p40/outputs/sequences/seq_00132/seq_00132.yaml \
     --out_dir /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/grad_att \
