@@ -507,11 +507,18 @@ def main() -> None:
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
+    # NOTE: don't freeze params. The legacy install() / retain_grad() approach
+    # needs the trunk's autograd graph alive end-to-end. With all params
+    # frozen AND integer-indexed residue inputs, no tensor in the trunk has
+    # requires_grad=True → checkpoint() warns "None of the inputs have
+    # requires_grad=True. Gradients will be None" and the captured distogram
+    # has requires_grad=False. The pair-rep-leaf mode could afford to freeze
+    # because it injected a leaf at distogram_module's input as a grad source;
+    # we don't have one. Param grads accumulate (~2.4 GB) but we ignore them.
     t0 = time.time()
     try:
         with (
             torch.enable_grad(),
-            _freeze_all_params(model),
             _train_mode_for_boltz_grads(model),
             _temporarily(model, "skip_run_structure", True),
         ):
