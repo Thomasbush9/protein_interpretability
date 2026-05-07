@@ -496,6 +496,36 @@ def main() -> None:
     cap = LayerCapture(model)
     cap.install()
 
+    # ---- Diagnostics: trace grad/training state through forward
+    def _diag_pre_model(_mod, _args, _kwargs):
+        print(
+            f"[diag] BOLTZ2.forward entry: model.training={model.training} "
+            f"struct_pred_training={getattr(model, 'structure_prediction_training', 'N/A')} "
+            f"grad_enabled={torch.is_grad_enabled()}"
+        )
+
+    def _diag_post_embedder(_mod, _inp, out):
+        t = out if isinstance(out, torch.Tensor) else out[0]
+        print(
+            f"[diag] input_embedder output: requires_grad={t.requires_grad} "
+            f"grad_enabled={torch.is_grad_enabled()}"
+        )
+
+    def _diag_pre_distogram(_mod, _args):
+        z = _args[0] if _args else None
+        zr = (z.requires_grad if isinstance(z, torch.Tensor) else "n/a")
+        print(
+            f"[diag] distogram_module entry: input z.requires_grad={zr} "
+            f"grad_enabled={torch.is_grad_enabled()} "
+            f"model.training={model.training}"
+        )
+
+    diag_handles = [
+        model.register_forward_pre_hook(_diag_pre_model, with_kwargs=True),
+        model.input_embedder.register_forward_hook(_diag_post_embedder),
+        model.distogram_module.register_forward_pre_hook(_diag_pre_distogram),
+    ]
+
     # ---- Forward + backward
     batch = next(iter(dataloader))
     batch = {
@@ -565,6 +595,8 @@ def main() -> None:
     finally:
         forward_backward_seconds = time.time() - t0
         cap.remove()
+        for h in diag_handles:
+            h.remove()
 
     if device.type == "cuda":
         peak_gb = torch.cuda.max_memory_allocated(device) / (1024 ** 3)
