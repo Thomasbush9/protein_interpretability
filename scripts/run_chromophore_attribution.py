@@ -168,21 +168,21 @@ def expected_distance(logits: torch.Tensor, centers: torch.Tensor) -> torch.Tens
     return (probs * centers.to(logits.device)).sum(dim=-1)
 
 
-def chromophore_block_l2(
+def expected_distance_l2(
     pred_logits: torch.Tensor,
     ref_logits: torch.Tensor,
-    block_positions: list[int],
+    block_positions: list[int] | None,
     contact_threshold_a: float = 8.0,
     centers: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict]:
-    """L2 on E[d_pred] vs E[d_WT], averaged over WT contact pairs in B.
+    """L2 on E[d_pred] vs E[d_WT], averaged over WT contact pairs.
 
     pred_logits, ref_logits: (B, N, N, K) distogram logits (same shape).
-    block_positions: 0-indexed positions defining B.
+    block_positions: 0-indexed positions defining the region. If None, the
+        loss is computed over the *whole* distogram (all valid pairs); if a
+        list, restricted to pairs (i,j) ∈ block_positions × block_positions.
 
-    Loss = mean_{(i,j) ∈ B×B, i≠j, E[d_WT(i,j)] < threshold} (E[d_WT] - E[d_pred])²
-
-    Returns (loss, info) where info has the contact mask + denom for diagnostics.
+    Loss = mean_{(i,j) ∈ region, i≠j, E[d_WT(i,j)] < threshold} (E[d_WT] - E[d_pred])²
     """
     if pred_logits.shape != ref_logits.shape:
         raise ValueError(
@@ -195,14 +195,15 @@ def chromophore_block_l2(
     e_pred = expected_distance(pred_logits, centers)  # (B, N, N)
     n = e_ref.shape[-1]
 
-    # Block mask: (N,) bool, True for positions in B
-    block_idx = torch.tensor(block_positions, device=e_ref.device, dtype=torch.long)
-    block_mask = torch.zeros(n, dtype=torch.bool, device=e_ref.device)
-    block_mask[block_idx] = True
-
-    pair_in_block = block_mask[None, :, None] & block_mask[None, None, :]  # (1, N, N)
     eye = torch.eye(n, dtype=torch.bool, device=e_ref.device)[None]
-    contact_mask = (e_ref < contact_threshold_a) & pair_in_block & ~eye  # (B, N, N)
+    contact_mask = (e_ref < contact_threshold_a) & ~eye  # (B, N, N)
+
+    if block_positions is not None:
+        block_idx = torch.tensor(block_positions, device=e_ref.device, dtype=torch.long)
+        block_mask_1d = torch.zeros(n, dtype=torch.bool, device=e_ref.device)
+        block_mask_1d[block_idx] = True
+        pair_in_block = block_mask_1d[None, :, None] & block_mask_1d[None, None, :]
+        contact_mask = contact_mask & pair_in_block
 
     diffs2 = (e_ref - e_pred) ** 2
     masked = diffs2 * contact_mask
@@ -210,10 +211,11 @@ def chromophore_block_l2(
     loss = masked.sum() / denom
 
     info = {
-        "n_contacts_in_B": int(contact_mask.sum()),
+        "n_contacts": int(contact_mask.sum()),
         "denom": float(denom),
-        "n_block_positions": len(block_positions),
+        "n_block_positions": len(block_positions) if block_positions is not None else n,
         "contact_threshold_a": contact_threshold_a,
+        "region": "block" if block_positions is not None else "whole",
     }
     return loss, info
 
@@ -252,6 +254,19 @@ class LayerCapture:
         self._handles.append(
             embedder.register_forward_hook(self._make_forward_capture_hook("query_emb"))
         )
+
+        # MSA channel: hook msa_proj's output. msa_proj sits BEFORE the
+        # checkpointed MSA blocks (`trunkv2.py:638`), so retain_grad on its
+        # output works the same way as input_embedder. Output shape is
+        # (B, S, N, msa_s) — gradient there gives per-row, per-column
+        # MSA-channel attribution.
+        msa_module = getattr(self.model, "msa_module", None)
+        if msa_module is not None and hasattr(msa_module, "msa_proj"):
+            self._handles.append(
+                msa_module.msa_proj.register_forward_hook(
+                    self._make_forward_capture_hook("msa_emb")
+                )
+            )
 
         distogram_module = getattr(self.model, "distogram_module", None)
         if distogram_module is None:
@@ -343,6 +358,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--recycling_steps", type=int, default=1,
                    help="Lower = less activation memory. Start at 1 for first run.")
     p.add_argument("--contact_threshold_a", type=float, default=8.0)
+    p.add_argument(
+        "--whole_structure",
+        action="store_true",
+        help="Compute the loss over the whole distogram (all WT contact pairs) "
+             "instead of restricting to B. Useful as a complement: compare "
+             "attribution maps to see whether the chromophore-block signal is "
+             "specific or just a slice of a uniform whole-fold signal.",
+    )
     p.add_argument("--no_kernels", action="store_true")
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=None)
@@ -594,16 +617,16 @@ def main() -> None:
             ref = wt_logits.to(device)
             if ref.ndim == 5:
                 ref = ref[..., 0, :]
-            loss, info = chromophore_block_l2(
+            loss_block_positions = None if args.whole_structure else block_positions
+            loss, info = expected_distance_l2(
                 pred_logits=pred_logits,
                 ref_logits=ref,
-                block_positions=block_positions,
+                block_positions=loss_block_positions,
                 contact_threshold_a=args.contact_threshold_a,
             )
             print(
-                f"[attr] loss={float(loss):.4f}  "
-                f"n_contacts_in_B={info['n_contacts_in_B']}  "
-                f"denom={info['denom']:.1f}"
+                f"[attr] region={info['region']}  loss={float(loss):.4f}  "
+                f"n_contacts={info['n_contacts']}  denom={info['denom']:.1f}"
             )
             loss.backward()
     finally:
@@ -629,6 +652,18 @@ def main() -> None:
     else:
         input_grad_norm = query_t.grad[0].detach().float().norm(dim=-1).cpu()  # (N,)
 
+    # MSA embedding: (B, S, N, msa_s) — L2 over (S, msa_s) → (N,)
+    msa_grad_norm = None
+    msa_t = cap.captured.get("msa_emb")
+    if msa_t is None:
+        print("[warn] msa_emb not captured — model has no msa_module.msa_proj?")
+    elif msa_t.grad is None:
+        print("[warn] msa_emb.grad is None — MSA-channel attribution unavailable")
+        msa_grad_norm = torch.zeros(msa_t.shape[2])
+    else:
+        # (1, S, N, msa_s) → norm over S and msa_s → (N,)
+        msa_grad_norm = msa_t.grad[0].detach().float().norm(dim=(0, 2)).cpu()  # (N,)
+
     # Pairformer layers: backward hooks already produced (N, N) per-layer norms
     # on CPU (hook reduces grad_output[1] in-place to keep GPU minimal).
     N = pred_logits.shape[1]
@@ -648,35 +683,42 @@ def main() -> None:
         )
 
     # ---- Save
-    out_path = out_dir / f"attribution_{args.mutant_yaml.stem}.pt"
-    torch.save(
-        {
-            "record_id": record_id,
-            "mutant_yaml": str(args.mutant_yaml),
-            "wt_distogram_path": str(args.wt_distogram),
-            "b_json_path": str(args.b_json),
-            "block_positions_0idx": block_positions,
-            "block_positions_1idx": b_1indexed,
-            "shell_radius_A": b_meta.get("shell_radius_A"),
-            "recycling_steps": args.recycling_steps,
-            "contact_threshold_a": args.contact_threshold_a,
-            "loss": float(loss),
-            "n_contacts_in_B": info["n_contacts_in_B"],
-            "input_grad_norm": input_grad_norm,  # (N,)
-            "pair_grad_norm": pair_grad_stack,  # (n_layers, N, N)
-            "n_pairformer_layers": n_pairformer,
-            "n_missing_layer_grads": n_missing,
-            "peak_gpu_gb": peak_gb,
-            "forward_backward_seconds": forward_backward_seconds,
-            "token_mask": batch["token_pad_mask"].cpu().bool(),
-        },
-        out_path,
-    )
+    region_tag = "whole" if args.whole_structure else "block"
+    out_path = out_dir / f"attribution_{args.mutant_yaml.stem}_{region_tag}.pt"
+    save_dict = {
+        "record_id": record_id,
+        "mutant_yaml": str(args.mutant_yaml),
+        "wt_distogram_path": str(args.wt_distogram),
+        "b_json_path": str(args.b_json),
+        "block_positions_0idx": block_positions,
+        "block_positions_1idx": b_1indexed,
+        "shell_radius_A": b_meta.get("shell_radius_A"),
+        "recycling_steps": args.recycling_steps,
+        "contact_threshold_a": args.contact_threshold_a,
+        "region": info["region"],
+        "loss": float(loss),
+        "n_contacts": info["n_contacts"],
+        "input_grad_norm": input_grad_norm,  # (N,)
+        "pair_grad_norm": pair_grad_stack,  # (n_layers, N, N)
+        "n_pairformer_layers": n_pairformer,
+        "n_missing_layer_grads": n_missing,
+        "peak_gpu_gb": peak_gb,
+        "forward_backward_seconds": forward_backward_seconds,
+        "token_mask": batch["token_pad_mask"].cpu().bool(),
+    }
+    if msa_grad_norm is not None:
+        save_dict["msa_grad_norm"] = msa_grad_norm  # (N,)
+    torch.save(save_dict, out_path)
     print(f"[attr] wrote -> {out_path}")
     print(
         f"[attr] input_grad_norm: max={float(input_grad_norm.max()):.3e} "
         f"mean={float(input_grad_norm.mean()):.3e}"
     )
+    if msa_grad_norm is not None:
+        print(
+            f"[attr] msa_grad_norm:   max={float(msa_grad_norm.max()):.3e} "
+            f"mean={float(msa_grad_norm.mean()):.3e}"
+        )
     print(
         f"[attr] pair_grad_norm:  max={float(pair_grad_stack.max()):.3e} "
         f"mean={float(pair_grad_stack.mean()):.3e}"
