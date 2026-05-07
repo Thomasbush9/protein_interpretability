@@ -481,6 +481,20 @@ def main() -> None:
         checkpoint_diffusion_conditioning=True,
     )
     model.eval()
+
+    # Boltz2.__init__ freezes trunk params at construction time when the
+    # loaded checkpoint has structure_prediction_training=False (`boltz2.py:351-358`).
+    # That happens before our `_train_mode_for_boltz_grads` flips the flag, so the
+    # params stay frozen → input_embedder's output ends up with requires_grad=False
+    # and the trunk graph is dead. Unfreeze everything explicitly here. We don't
+    # *use* the param grads, but they need to exist for activations to carry grad.
+    n_unfrozen = 0
+    for p in model.parameters():
+        if not p.requires_grad:
+            p.requires_grad_(True)
+            n_unfrozen += 1
+    print(f"[attr] unfroze {n_unfrozen} trunk params (set requires_grad=True)")
+
     device = torch.device(
         "cuda" if args.accelerator == "gpu" and torch.cuda.is_available() else "cpu"
     )
