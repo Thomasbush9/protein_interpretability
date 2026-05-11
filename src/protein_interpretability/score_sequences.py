@@ -4,7 +4,6 @@ import csv
 import re
 from argparse import ArgumentParser
 from pathlib import Path
-from urllib.request import urlretrieve
 
 from protein_interpretability.scoring import (
     extract_residue_coordinates,
@@ -18,7 +17,6 @@ from protein_interpretability.scoring import (
 
 SEQUENCE_INDEX_PATTERN = re.compile(r"seq_(\d+)")
 SUPPORTED_STRUCTURE_SUFFIXES = (".cif", ".pdb")
-RCSB_CIF_URL = "https://files.rcsb.org/download/{pdb}.cif"
 PAIRS_FIELDNAMES = [
     "seq_id",
     "idx_tableS1",
@@ -64,12 +62,11 @@ def parse_args() -> ArgumentParser:
         "--refs-dir",
         type=Path,
         default=None,
-        help="Pairs mode: directory holding <pdb>.cif reference files.",
-    )
-    parser.add_argument(
-        "--download-missing-refs",
-        action="store_true",
-        help="Pairs mode: fetch missing <pdb>.cif from RCSB into --refs-dir.",
+        help=(
+            "Pairs mode: directory holding pre-staged reference structures. "
+            "Looks for '<pdb>_<chain>.{pdb,cif}' (single-chain, Porter convention) "
+            "or '<pdb>.{cif,pdb}' (full structure)."
+        ),
     )
     parser.add_argument(
         "--predicted-dir",
@@ -199,22 +196,28 @@ def parse_fold_field(fold: str) -> tuple[str, str]:
     return fold[:4].lower(), fold[4:]
 
 
-def ensure_reference_cif(
-    pdb_id: str, refs_dir: Path, *, download_missing: bool
-) -> Path:
-    """Return path to refs_dir/<pdb>.cif, optionally fetching from RCSB."""
-    refs_dir.mkdir(parents=True, exist_ok=True)
-    target = refs_dir / f"{pdb_id}.cif"
-    if target.exists():
-        return target
-    if not download_missing:
-        raise FileNotFoundError(
-            f"Reference {target} missing. Pass --download-missing-refs or stage it manually."
-        )
-    url = RCSB_CIF_URL.format(pdb=pdb_id)
-    print(f"[refs] downloading {url}")
-    urlretrieve(url, target)
-    return target
+def resolve_reference(
+    pdb_id: str, chain_id: str, refs_dir: Path
+) -> tuple[Path, str | None]:
+    """Locate a reference structure for (pdb_id, chain_id) in refs_dir.
+
+    Tries Porter's per-chain naming first (<pdb>_<chain>.{pdb,cif}, single
+    chain inside → return None for chain_to_extract), then full-structure
+    files (<pdb>.{cif,pdb}, multi-chain → return chain_id).
+    """
+    candidates: list[tuple[Path, str | None]] = [
+        (refs_dir / f"{pdb_id}_{chain_id}.pdb", None),
+        (refs_dir / f"{pdb_id}_{chain_id}.cif", None),
+        (refs_dir / f"{pdb_id}.cif", chain_id),
+        (refs_dir / f"{pdb_id}.pdb", chain_id),
+    ]
+    for path, chain_to_extract in candidates:
+        if path.exists():
+            return path, chain_to_extract
+    raise FileNotFoundError(
+        f"No reference for {pdb_id} chain {chain_id} in {refs_dir}. "
+        f"Tried: {[c[0].name for c in candidates]}"
+    )
 
 
 def find_prediction_for_seq(
@@ -238,17 +241,22 @@ def find_prediction_for_seq(
 def score_pair(
     predicted_path: Path,
     ref1_path: Path,
-    chain1: str,
+    ref1_chain: str | None,
     ref2_path: Path,
-    chain2: str,
+    ref2_chain: str | None,
     normalize_by: str,
 ) -> tuple[float, float, float, float]:
-    """Score one prediction against two references with their auth chains."""
+    """Score one prediction against two references.
+
+    ``ref{1,2}_chain`` is the chain id to extract from a multi-chain ref file,
+    or ``None`` if the file is already a single-chain structure (Porter
+    convention).
+    """
     pred_struct = load_structure(predicted_path)
     pred_coords, _ = extract_residue_coordinates(pred_struct, chain_id=None)
     pred_seq = extract_residue_sequence(pred_struct, chain_id=None)
 
-    def _score_against(ref_path: Path, chain: str) -> tuple[float, float]:
+    def _score_against(ref_path: Path, chain: str | None) -> tuple[float, float]:
         ref_struct = load_structure(ref_path)
         ref_coords, _ = extract_residue_coordinates(ref_struct, chain_id=chain)
         ref_seq = extract_residue_sequence(ref_struct, chain_id=chain)
@@ -258,8 +266,8 @@ def score_pair(
         rmsd_val = rmsd(ref_coords, pred_coords, ref_seq, pred_seq)
         return tm, rmsd_val
 
-    tm_g1, rmsd_g1 = _score_against(ref1_path, chain1)
-    tm_g2, rmsd_g2 = _score_against(ref2_path, chain2)
+    tm_g1, rmsd_g1 = _score_against(ref1_path, ref1_chain)
+    tm_g2, rmsd_g2 = _score_against(ref2_path, ref2_chain)
     return tm_g1, tm_g2, rmsd_g1, rmsd_g2
 
 
@@ -270,7 +278,6 @@ def score_pairs(
     *,
     model_subdir: str | None,
     normalize_by: str,
-    download_missing: bool,
 ) -> list[dict[str, str | int | float]]:
     rows: list[dict[str, str | int | float]] = []
     with pairs_manifest.open("r", newline="") as handle:
@@ -289,7 +296,7 @@ def score_pairs(
             if not (seq_id and fold1 and fold2):
                 continue
             chain_used = entry.get("chain_used", "").strip() or fold1
-            primary_fold = "fold2" if chain_used == fold2 else "fold1"
+            primary_fold = "fold2" if chain_used.lower() == fold2.lower() else "fold1"
             seq_len_raw = entry.get("seq_len", "").strip()
             seq_len: int | str = int(seq_len_raw) if seq_len_raw.isdigit() else ""
 
@@ -302,20 +309,20 @@ def score_pairs(
 
             pdb1, chain1 = parse_fold_field(fold1)
             pdb2, chain2 = parse_fold_field(fold2)
-            ref1 = ensure_reference_cif(
-                pdb1, refs_dir, download_missing=download_missing
-            )
-            ref2 = ensure_reference_cif(
-                pdb2, refs_dir, download_missing=download_missing
-            )
+            try:
+                ref1_path, ref1_chain = resolve_reference(pdb1, chain1, refs_dir)
+                ref2_path, ref2_chain = resolve_reference(pdb2, chain2, refs_dir)
+            except FileNotFoundError as exc:
+                print(f"[skip] {seq_id}: {exc}")
+                continue
 
             try:
                 tm_g1, tm_g2, rmsd_g1, rmsd_g2 = score_pair(
                     predicted_path,
-                    ref1,
-                    chain1,
-                    ref2,
-                    chain2,
+                    ref1_path,
+                    ref1_chain,
+                    ref2_path,
+                    ref2_chain,
                     normalize_by=normalize_by,
                 )
             except Exception as exc:  # noqa: BLE001 — report and continue cohort
@@ -379,7 +386,6 @@ def main() -> None:
             refs_dir=args.refs_dir,
             model_subdir=args.model_subdir,
             normalize_by=args.normalize_by,
-            download_missing=args.download_missing_refs,
         )
         if not rows:
             raise RuntimeError(
