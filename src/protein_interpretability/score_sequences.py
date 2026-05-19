@@ -5,6 +5,8 @@ import re
 from argparse import ArgumentParser
 from pathlib import Path
 
+import numpy as np
+
 from protein_interpretability.scoring import (
     extract_residue_coordinates,
     extract_residue_sequence,
@@ -14,6 +16,7 @@ from protein_interpretability.scoring import (
     rmsd,
     tm_score,
 )
+from protein_interpretability.scoring.region import align_region, slice_region
 
 SEQUENCE_INDEX_PATTERN = re.compile(r"seq_(\d+)")
 SUPPORTED_STRUCTURE_SUFFIXES = (".cif", ".pdb")
@@ -30,6 +33,14 @@ PAIRS_FIELDNAMES = [
     "tm_g2",
     "rmsd_g1",
     "rmsd_g2",
+    "tm_g1_region",
+    "tm_g2_region",
+    "rmsd_g1_region",
+    "rmsd_g2_region",
+    "region_len_g1",
+    "region_len_g2",
+    "region_len_pred",
+    "region_status",
 ]
 
 
@@ -238,6 +249,9 @@ def find_prediction_for_seq(
     return candidates[0]
 
 
+_NA = float("nan")
+
+
 def score_pair(
     predicted_path: Path,
     ref1_path: Path,
@@ -245,18 +259,27 @@ def score_pair(
     ref2_path: Path,
     ref2_chain: str | None,
     normalize_by: str,
-) -> tuple[float, float, float, float]:
+    region_seq: str | None = None,
+) -> dict[str, float | int | str]:
     """Score one prediction against two references.
 
     ``ref{1,2}_chain`` is the chain id to extract from a multi-chain ref file,
     or ``None`` if the file is already a single-chain structure (Porter
-    convention).
+    convention). If ``region_seq`` is provided, also compute region-restricted
+    TM/RMSD by locally aligning ``region_seq`` to pred/ref1/ref2 and slicing.
+
+    Returns a dict with whole-chain scores (``tm_g1``/``tm_g2``/``rmsd_g1``/
+    ``rmsd_g2``) and, when a region was scored, region scores
+    (``tm_g{1,2}_region``, ``rmsd_g{1,2}_region``, lengths, and ``region_status``).
+    Region columns are NaN when not applicable.
     """
     pred_struct = load_structure(predicted_path)
     pred_coords, _ = extract_residue_coordinates(pred_struct, chain_id=None)
     pred_seq = extract_residue_sequence(pred_struct, chain_id=None)
 
-    def _score_against(ref_path: Path, chain: str | None) -> tuple[float, float]:
+    def _score_against(
+        ref_path: Path, chain: str | None
+    ) -> tuple[float, float, np.ndarray, str]:
         ref_struct = load_structure(ref_path)
         ref_coords, _ = extract_residue_coordinates(ref_struct, chain_id=chain)
         ref_seq = extract_residue_sequence(ref_struct, chain_id=chain)
@@ -264,11 +287,62 @@ def score_pair(
             ref_coords, pred_coords, ref_seq, pred_seq, normalize_by=normalize_by
         )
         rmsd_val = rmsd(ref_coords, pred_coords, ref_seq, pred_seq)
-        return tm, rmsd_val
+        return tm, rmsd_val, ref_coords, ref_seq
 
-    tm_g1, rmsd_g1 = _score_against(ref1_path, ref1_chain)
-    tm_g2, rmsd_g2 = _score_against(ref2_path, ref2_chain)
-    return tm_g1, tm_g2, rmsd_g1, rmsd_g2
+    tm_g1, rmsd_g1, ref1_coords, ref1_seq = _score_against(ref1_path, ref1_chain)
+    tm_g2, rmsd_g2, ref2_coords, ref2_seq = _score_against(ref2_path, ref2_chain)
+
+    result: dict[str, float | int | str] = {
+        "tm_g1": tm_g1,
+        "tm_g2": tm_g2,
+        "rmsd_g1": rmsd_g1,
+        "rmsd_g2": rmsd_g2,
+        "tm_g1_region": _NA,
+        "tm_g2_region": _NA,
+        "rmsd_g1_region": _NA,
+        "rmsd_g2_region": _NA,
+        "region_len_g1": _NA,
+        "region_len_g2": _NA,
+        "region_len_pred": _NA,
+        "region_status": "no_region",
+    }
+    if not region_seq:
+        return result
+
+    m_pred = align_region(region_seq, pred_seq)
+    m_ref1 = align_region(region_seq, ref1_seq)
+    m_ref2 = align_region(region_seq, ref2_seq)
+
+    statuses: list[str] = []
+    if m_pred is None:
+        statuses.append("fail_pred")
+    if m_ref1 is None:
+        statuses.append("fail_ref1")
+    if m_ref2 is None:
+        statuses.append("fail_ref2")
+    if statuses:
+        result["region_status"] = "+".join(statuses)
+        return result
+
+    # Slice each structure to its locally-aligned region
+    pc, ps = slice_region(pred_coords, pred_seq, m_pred.start, m_pred.end)
+    r1c, r1s = slice_region(ref1_coords, ref1_seq, m_ref1.start, m_ref1.end)
+    r2c, r2s = slice_region(ref2_coords, ref2_seq, m_ref2.start, m_ref2.end)
+
+    result["region_len_pred"] = m_pred.length
+    result["region_len_g1"] = m_ref1.length
+    result["region_len_g2"] = m_ref2.length
+
+    result["tm_g1_region"] = tm_score(
+        r1c, pc, r1s, ps, normalize_by=normalize_by
+    )
+    result["tm_g2_region"] = tm_score(
+        r2c, pc, r2s, ps, normalize_by=normalize_by
+    )
+    result["rmsd_g1_region"] = rmsd(r1c, pc, r1s, ps)
+    result["rmsd_g2_region"] = rmsd(r2c, pc, r2s, ps)
+    result["region_status"] = "ok"
+    return result
 
 
 def score_pairs(
@@ -316,14 +390,16 @@ def score_pairs(
                 print(f"[skip] {seq_id}: {exc}")
                 continue
 
+            region_seq = entry.get("fold_switch_region", "").strip() or None
             try:
-                tm_g1, tm_g2, rmsd_g1, rmsd_g2 = score_pair(
+                scores = score_pair(
                     predicted_path,
                     ref1_path,
                     ref1_chain,
                     ref2_path,
                     ref2_chain,
                     normalize_by=normalize_by,
+                    region_seq=region_seq,
                 )
             except Exception as exc:  # noqa: BLE001 — report and continue cohort
                 print(f"[error] {seq_id}: {type(exc).__name__}: {exc}")
@@ -339,10 +415,7 @@ def score_pairs(
                     "primary_fold": primary_fold,
                     "seq_len": seq_len,
                     "predicted_path": str(predicted_path),
-                    "tm_g1": tm_g1,
-                    "tm_g2": tm_g2,
-                    "rmsd_g1": rmsd_g1,
-                    "rmsd_g2": rmsd_g2,
+                    **scores,
                 }
             )
 
