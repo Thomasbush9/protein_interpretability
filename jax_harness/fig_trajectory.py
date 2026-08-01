@@ -58,7 +58,7 @@ def title(ax, letter, text, sub=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--glob", default="runs/traj2_*.npz")
+    ap.add_argument("--glob", default="runs/traj3_*.npz")
     ap.add_argument("--out", default="figures/trajectory.png")
     args = ap.parse_args()
 
@@ -74,11 +74,11 @@ def main():
                          n=div.shape[0], npairs=floor.shape[0]))
     print(f"{len(runs)} proteins")
 
-    fig = plt.figure(figsize=(14.2, 4.5))
-    gs = fig.add_gridspec(1, 3, wspace=.27, left=.05, right=.985, top=.74, bottom=.155)
+    fig = plt.figure(figsize=(14.2, 5.2))
+    gs = fig.add_gridspec(1, 3, wspace=.27, left=.05, right=.985, top=.685, bottom=.135)
 
     # ---- A: the two curves, for one protein --------------------------------
-    r = runs[0]
+    r = next((q for q in runs if q["name"].startswith("RCRO")), runs[0])
     ax = fig.add_subplot(gs[0, 0])
     ax.fill_between(r["sig"], r["fl"] - r["fl_sd"], r["fl"] + r["fl_sd"],
                     color=WT_C, alpha=.18, lw=0)
@@ -95,7 +95,7 @@ def main():
     ax.set_ylabel("RMSD between trajectories  (A)")
     ax.legend(frameon=False, fontsize=8, loc="lower left")
     title(ax, "A", f"{r['name']}: mutant path vs the sampler's own spread",
-          "the orange curve never leaves the blue band")
+          "both fall ~4 orders of magnitude as sigma anneals; only the ratio is readable")
 
     # ---- B: the ratio -------------------------------------------------------
     ax = fig.add_subplot(gs[0, 1])
@@ -103,17 +103,20 @@ def main():
         ax.plot(r["sig"], r["div"] / np.maximum(r["fl"], 1e-9),
                 lw=1.7, color=[MUT_C, ACC, "#159a8c"][k % 3], label=r["name"])
     ax.axhline(1, color=INK, lw=1.1, ls="--")
-    ax.text(.985, 1.02, "mutation moves the path more than resampling does",
+    ax.text(.985, 1.02, "above: mutation moves the path more than resampling does",
             transform=ax.get_yaxis_transform(), ha="right", va="bottom",
             fontsize=7.8, color=INK2)
+    ax.axvspan(1.0, 0.002, color="#eb6834", alpha=.07, lw=0, zorder=0)
+    ax.text(.55, .04, "sigma < 1 A\nfine refinement", transform=ax.transAxes,
+            fontsize=7.6, color=INK2, ha="center")
     log_axis(ax, "x")
     ax.invert_xaxis()
     ax.set_ylim(0, 1.45)
     ax.set_xlabel("noise level sigma  (A)")
     ax.set_ylabel("divergence / noise floor")
     ax.legend(frameon=False, fontsize=8.2, loc="lower left")
-    title(ax, "B", "the ratio stays below 1 at every step",
-          "3 proteins, 100 variants each")
+    title(ax, "B", "the mutation only bends the path at the very end",
+          "flat near 0.6 while the fold is decided; rises only for sigma < 1 A")
 
     # ---- C: does the divergence track the measured effect? ------------------
     ax = fig.add_subplot(gs[0, 2])
@@ -127,23 +130,29 @@ def main():
             fontsize=8, color=WT_C)
     log_axis(ax, "x")
     ax.invert_xaxis()
-    ax.set_ylim(-.45, .65)
+    ax.set_ylim(-.55, .65)
     ax.set_xlabel("noise level sigma  (A)")
     ax.set_ylabel("Spearman rho with measured dG")
-    ax.legend(frameon=False, fontsize=8.2, loc="lower right")
-    title(ax, "C", "no step of the path predicts stability",
-          "rho between per-variant divergence and measured dG")
+    ax.legend(frameon=False, fontsize=8.2, loc="upper left")
+    for k, q in enumerate(runs):
+        ax.scatter([q["sig"][-1]], [q["rho"][-1]], s=42, zorder=5,
+                   color=[MUT_C, ACC, "#159a8c"][k % 3],
+                   edgecolor="#fcfcfb", linewidth=1.1)
+    title(ax, "C", "and only in one protein of three",
+          "rho(divergence, measured dG); dots = endpoint")
 
-    fig.text(.05, .93,
-             "The sampler does not carry the mutation: its path stays inside its own noise",
+    fig.text(.05, .955,
+             "While the fold is being decided the sampler ignores the mutation; "
+             "it responds only during fine refinement",
              fontsize=13, fontweight="bold", color=INK)
-    fig.text(.05, .865,
-             "Divergence is the Kabsch RMSD between a mutant trajectory and a wild-type "
-             "trajectory at the same denoising step. Because Boltz-2 draws fresh noise per "
-             "call the two are independent samples, so the number only means something "
-             "against a same-sequence floor: the wild type sampled with 4 keys, all 6 "
-             "pairwise separations. The ratio never exceeds 1.",
-             fontsize=8.6, color=INK2)
+    fig.text(.05, .845,
+             "Divergence is the Kabsch RMSD between a mutant trajectory and a wild-type trajectory at "
+             "the same denoising step. Boltz-2 draws fresh noise per call, so the two are independent "
+             "samples and the raw number is\nmeaningless on its own; the denominator is a "
+             "same-sequence floor (the wild type sampled with 4 keys, all 6 pairwise separations). "
+             "Superposition via geom.kabsch_rmsd, which self-tests on import -- an\nearlier run of "
+             "this same experiment used a transposed rotation and had to be discarded.",
+             fontsize=8.4, color=INK2)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out, dpi=190, facecolor=fig.get_facecolor())
