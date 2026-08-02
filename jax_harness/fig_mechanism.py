@@ -185,8 +185,11 @@ def main():
           f"sym. KL {off[i, j]:.2f} nats;  E[d] {(pw * centres).sum():.2f} -> "
           f"{(pm * centres).sum():.2f} A (dashed)")
 
+    # which model produced this -- the npz records it; Boltz-2 predates the field
+    mdl = str(d["model"]) if "model" in d.files else "boltz-2"
+    nice = {"openfold3": "OpenFold3", "boltz-2": "Boltz-2"}.get(mdl, mdl)
     fig.text(.05, .968,
-             "The trunk's belief changes; the sampled structure does not",
+             f"{nice}: the trunk's belief changes; the sampled structure does not",
              fontsize=13.5, fontweight="bold", color=INK)
     fig.text(.05, .922,
              f"GFP, N={N} residues.  32 buried positions mutated to charged residues. "
