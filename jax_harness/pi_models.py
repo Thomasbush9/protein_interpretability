@@ -90,6 +90,23 @@ def load(name: str):
     return BUILDERS[name]()
 
 
+INNER_FIELD = {"of3": "model", "protenix": "protenix", "boltz2": "model"}
+
+
+def inner(name: str, model):
+    """The underlying network inside a mosaic wrapper.
+
+    `load()` returns the mosaic StructurePredictionModel wrapper, which is what
+    `model_output` needs. Activation capture needs the network it wraps --
+    `jopenfold3.OpenFold3`, `protenij.Protenix` -- reached by a different field
+    name in each wrapper.
+    """
+    f = INNER_FIELD.get(name)
+    if f and hasattr(model, f):
+        return getattr(model, f)
+    return model
+
+
 def bin_centres(bins: np.ndarray, n_bins: int) -> np.ndarray:
     """Bin centres in Angstrom, from whatever convention the model reports.
 
