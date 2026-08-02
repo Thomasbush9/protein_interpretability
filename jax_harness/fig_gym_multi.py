@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
-from analyze_gym_multi import INTERNAL, grouped_split, ridge_fit, ridge_pred  # noqa
+from analyze_gym_multi import INTERNAL, grouped_split, fit_internal  # noqa
 import geom  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
@@ -45,10 +45,7 @@ def collect(files, splits=5):
             tr, te = grouped_split(pos, rng)
             if te.sum() < 8 or tr.sum() < 20:
                 continue
-            mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-9
-            Xs = (X - mu) / sd
-            w = ridge_fit(Xs[tr], y[tr], 1.0)
-            ri = spearmanr(ridge_pred(w, Xs[te]), y[te]).correlation
+            ri = fit_internal(X, y, pos, tr, te, s)   # same estimator as the table
             rt = spearmanr(tm[te], y[te]).correlation
             per[model]["internal"].append(ri)
             per[model]["TM to WT"].append(rt)

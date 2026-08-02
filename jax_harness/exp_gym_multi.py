@@ -47,6 +47,8 @@ def main():
     ap.add_argument("--recycles", type=int, default=3)
     ap.add_argument("--sampling-steps", type=int, default=100)
     ap.add_argument("--msa-cap", type=int, default=2048)
+    ap.add_argument("--single-sequence", action="store_true",
+                    help="no MSA -- the only mode mosaic's AF2 wrapper supports")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -78,10 +80,14 @@ def main():
     import geom
 
     def run(seq, tag):
-        a3m = work / "msa" / f"{tag}.a3m"
-        graft_a3m(a3m, src, seq, wt, cap=args.msa_cap)
+        if args.single_sequence:
+            a3m_path = None
+        else:
+            a3m = work / "msa" / f"{tag}.a3m"
+            graft_a3m(a3m, src, seq, wt, cap=args.msa_cap)
+            a3m_path = str(a3m)
         feats, depth = pi_models.features_for(
-            args.model, model, seq, str(a3m), work=work / tag)
+            args.model, model, seq, a3m_path, work=work / tag)
         o = model.model_output(features=feats, recycling_steps=args.recycles,
                                sampling_steps=args.sampling_steps,
                                key=jax.random.key(0))
@@ -117,6 +123,7 @@ def main():
     out["model"] = np.array(args.model)
     out["assay"] = np.array(args.assay)
     out["msa_depth"] = np.array(depth_wt)
+    out["single_sequence"] = np.array(bool(args.single_sequence))
     np.savez_compressed(args.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}", flush=True)
 

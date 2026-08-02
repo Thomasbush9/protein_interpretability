@@ -38,6 +38,29 @@ def ridge_pred(w, X):
     return np.column_stack([np.ones(len(X)), X]) @ w
 
 
+def fit_internal(X, y, pos, tr, te, seed):
+    """Internal-feature prediction for one split. THE single definition.
+
+    lambda is tuned on an inner position-grouped split of the TRAINING rows
+    only. Both the table and the figure call this, so they cannot report
+    different numbers for the same data -- an earlier version of the figure
+    hardcoded lambda = 1.0 while the table tuned it.
+    """
+    mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-9
+    Xs = (X - mu) / sd
+    best, best_r = 1.0, -9
+    itr, ite = grouped_split(pos[tr], np.random.default_rng(seed))
+    for lam in (0.1, 1.0, 10.0, 100.0):
+        if ite.sum() < 4 or itr.sum() < 10:
+            continue
+        w = ridge_fit(Xs[tr][itr], y[tr][itr], lam)
+        r = spearmanr(ridge_pred(w, Xs[tr][ite]), y[tr][ite]).correlation
+        if np.isfinite(r) and r > best_r:
+            best_r, best = r, lam
+    w = ridge_fit(Xs[tr], y[tr], best)
+    return spearmanr(ridge_pred(w, Xs[te]), y[te]).correlation
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--glob", default="runs/gymm_*.npz")
@@ -63,20 +86,7 @@ def main():
             tr, te = grouped_split(pos, rng)
             if te.sum() < 8 or tr.sum() < 20:
                 continue
-            mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-9
-            Xs = (X - mu) / sd
-            # lambda chosen on train only, by an inner position-grouped split
-            best, best_r = 1.0, -9
-            itr, ite = grouped_split(pos[tr], np.random.default_rng(s))
-            for lam in (0.1, 1.0, 10.0, 100.0):
-                if ite.sum() < 4 or itr.sum() < 10:
-                    continue
-                w = ridge_fit(Xs[tr][itr], y[tr][itr], lam)
-                r = spearmanr(ridge_pred(w, Xs[tr][ite]), y[tr][ite]).correlation
-                if np.isfinite(r) and r > best_r:
-                    best_r, best = r, lam
-            w = ridge_fit(Xs[tr], y[tr], best)
-            rho_int = spearmanr(ridge_pred(w, Xs[te]), y[te]).correlation
+            rho_int = fit_internal(X, y, pos, tr, te, s)
             per[model]["internal"].append(rho_int)
             rho_tm = spearmanr(tm_to_wt[te], y[te]).correlation
             for nm, v in (("TM to WT", tm_to_wt), ("pLDDT", d["plddt_mean"]),

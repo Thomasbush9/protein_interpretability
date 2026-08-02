@@ -257,12 +257,16 @@ def msa_depth(name: str, features) -> int:
     m = msa_array(name, features)
     if m is None:
         return -1
-    sh = [d for d in m.shape if d > 1]
     if name == "of3":
         return int(m.shape[1])
-    # boltz-2 / protenix: [..., Nm, Nt] or [..., Nm, Nt, C]; the token axis is
-    # the one matching N_token, so the depth is the other large axis
-    return int(max(sh[:2])) if len(sh) >= 2 else -1
+    # boltz-2 / protenix: [..., Nm, Nt] or [..., Nm, Nt, C]. Identify the ROW
+    # axis by elimination against the token count rather than by "largest",
+    # which returns the sequence length whenever the alignment has a single row
+    # (the single-sequence case) -- it reported 238 for a 238-residue protein.
+    sq = [d for d in m.shape if d != 1]
+    if len(sq) >= 2:
+        return int(sq[0])
+    return 1 if m.ndim >= 2 else -1
 
 
 def features_for(name: str, model, seq: str, a3m: str | None, work: Path):
