@@ -62,12 +62,40 @@ def build_hybrid(emb_recipient, emb_donor, feats_recipient, feats_donor, routes)
     feats = dict(feats_recipient)
     if "msa_query" in routes or "msa_prior" in routes:
         msa_r, msa_d = feats_recipient["msa"], feats_donor["msa"]
-        if msa_r.shape != msa_d.shape:
+        # axis 1 is DEPTH and is allowed to differ (handled below); everything
+        # else -- batch, tokens, encoding -- must match
+        if (msa_r.shape[0] != msa_d.shape[0]
+                or msa_r.shape[2:] != msa_d.shape[2:]):
             raise ValueError(
-                f"MSA shapes differ ({msa_r.shape} vs {msa_d.shape}); patching rows "
-                "requires the two runs to share an alignment. Build both yamls "
-                "against the same a3m."
+                f"MSA shapes differ beyond depth ({msa_r.shape} vs {msa_d.shape}); "
+                "patching requires the same tokens and encoding."
             )
+        if msa_r.shape[1] != msa_d.shape[1]:
+            # Depth may differ by a few rows even from identically-capped a3m
+            # files, because Boltz-2 dedups against the QUERY and each variant's
+            # query differs. With grafted alignments this never happens; with
+            # genuinely re-searched ones it does, by ~1-15 rows out of ~300-500.
+            #
+            # Patch the common prefix. Legitimate here ONLY because the homolog
+            # sets are ~98 % identical by UniRef ID (measured), so the truncated
+            # tail is a handful of low-ranked hits, not a different alignment.
+            # Do NOT use this to paper over genuinely different MSAs.
+            n = min(msa_r.shape[1], msa_d.shape[1])
+            # `msa` is not alone on the depth axis: deletion_value, has_deletion
+            # and friends are aligned to it and are concatenated with it
+            # downstream. Truncating `msa` by itself produces a concat error, so
+            # every feature whose axis 1 matches the old depth is truncated too.
+            def _trim(fd, old, n):
+                out = {}
+                for k, v in fd.items():
+                    if hasattr(v, "shape") and v.ndim >= 2 and v.shape[1] == old:
+                        out[k] = v[:, :n]
+                    else:
+                        out[k] = v
+                return out
+            feats_recipient = _trim(feats_recipient, msa_r.shape[1], n)
+            feats_donor = _trim(feats_donor, msa_d.shape[1], n)
+            msa_r, msa_d = feats_recipient["msa"], feats_donor["msa"]
         msa = msa_r
         if "msa_query" in routes:
             msa = msa.at[:, 0].set(msa_d[:, 0])
