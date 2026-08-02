@@ -12,6 +12,11 @@ CI includes zero.
     B  what it costs: mean TM to wild type and pLDDT vs gamma
     C  the readouts ranked -- including ||dz|| straight off the trunk, which
        beats every decoded structure here and needs no sampling at all
+
+All four bars in panel C are the same 60 variants under the same protocol, so
+they are comparable to each other. They are NOT comparable to the 12-assay
+held-out probe (0.548): different assays, different protocol, and a
+linspace-over-sorted-dG pick that expands the dG spread by 5-22 %.
 """
 from __future__ import annotations
 
@@ -94,7 +99,7 @@ def main():
     ax.plot(cg, pmean, color=PERM_C, lw=2.4, marker="s", ms=6, ls="--", zorder=4,
             label="another variant's difference,\nrescaled to the same norm")
     ax.axhline(0, color=GRID, lw=1)
-    ax.axhline(np.mean([r["direct"] for r in per]), color=TRUNK_C, lw=1.5, ls=":")
+    ax.axhline(np.mean([r["direct"] for r in per]), color=TRUNK_C, lw=1.5, ls=":")  # same 60 variants
     ax.text(8, np.mean([r["direct"] for r in per]) - .052,
             "||dz|| off the trunk, no decoding", fontsize=7.8, color=TRUNK_C, ha="right")
     ax.annotate("", xy=(8, tmean[-1]), xytext=(8, pmean[-1]),
@@ -148,13 +153,17 @@ def main():
     ax.set_ylim(len(labs) - .5, -.75)
     ax.set_xlim(0, .80)
     ax.set_xlabel("rho with measured dG")
-    ax.axvline(0.548, color=INK2, lw=1.1, ls=":", zorder=1)
-    ax.text(0.792, 1.5, "Pairformer probe 0.548 (held-out)", fontsize=7.4,
-            color=INK2, ha="right", va="center", rotation=90)
+    # NO probe reference line here. The 12-assay probe (0.548, held-out
+    # positions, 250 variants/assay) is not comparable to these bars: different
+    # assay set (probe on these 3 assays is 0.506), different protocol
+    # (held-out fitted model vs full-sample single feature), and these 60
+    # variants were linspace-picked over sorted dG, which expands the dG spread
+    # by 5-22 % and inflates any correlation computed on them. The bars are
+    # comparable to EACH OTHER, which is the comparison this panel is for.
     for sp in ("left",):
         ax.spines[sp].set_visible(False)
     title(ax, "C", "amplification is not the best readout",
-          "the trunk's own perturbation norm beats every decoded structure")
+          "same 60 variants throughout; not comparable to the 12-assay probe")
 
     fig.text(.055, .950,
              "Scaling the mutation-specific difference does make the structure track "
