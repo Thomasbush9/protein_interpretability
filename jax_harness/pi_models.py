@@ -55,8 +55,10 @@ def _protenix():
 
 
 def _af2():
-    from mosaic.models.af2 import load_af2
-    return load_af2(multimer=False)
+    # load_af2() returns (forward_fn, params) -- the model is the wrapper CLASS.
+    # AF2 is single-sequence only here: target_only_features asserts not use_msa.
+    from mosaic.models.af2 import AlphaFold2
+    return AlphaFold2(multimer=False)
 
 
 BUILDERS = {"boltz2": _boltz2, "of3": _of3, "protenix": _protenix, "af2": _af2}
@@ -263,8 +265,15 @@ def msa_depth(name: str, features) -> int:
     return int(max(sh[:2])) if len(sh) >= 2 else -1
 
 
-def features_for(name: str, model, seq: str, a3m: str, work: Path):
+def features_for(name: str, model, seq: str, a3m: str | None, work: Path):
     """Featurise `seq` with OUR alignment, whatever the wrapper prefers.
+
+    `a3m=None` means SINGLE-SEQUENCE (no alignment). That is the only mode the
+    mosaic AlphaFold2 wrapper supports -- it asserts `not use_msa` and pins
+    max_msa_clusters=1 -- so any comparison involving AF2 must put the other
+    models in the same mode. Single-sequence input is a different operating
+    point, not a variant of the MSA one: we measured it to be ~4.4x more
+    mutation-sensitive than full depth.
 
     Returns (features, msa_depth). `msa_depth` is read back from the features,
     not from what we passed in, so it reflects what the model actually saw.
@@ -272,6 +281,12 @@ def features_for(name: str, model, seq: str, a3m: str, work: Path):
     from mosaic.structure_prediction import TargetChain
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
+
+    if a3m is None:
+        feats, _ = model.target_only_features(
+            [TargetChain(sequence=seq, use_msa=False)])
+        return feats, msa_depth(name, feats)
+
     a3m = str(Path(a3m).resolve())
 
     if name == "boltz2":

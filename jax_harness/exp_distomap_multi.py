@@ -28,6 +28,8 @@ def main():
     ap.add_argument("--ids", required=True, help="comma list; first is the reference")
     ap.add_argument("--recycles", type=int, default=3)
     ap.add_argument("--sampling-steps", type=int, default=200)
+    ap.add_argument("--single-sequence", action="store_true",
+                    help="no MSA -- the only mode mosaic's AF2 wrapper supports")
     ap.add_argument("--work", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -49,9 +51,9 @@ def main():
         y = (data / "yamls" / f"{cid}.yaml").read_text()
         seq = [l.split(":", 1)[1].strip() for l in y.splitlines()
                if l.strip().startswith("sequence:")][0]
-        a3m = data / "msa" / f"{cid}.a3m"
+        a3m = None if args.single_sequence else str(data / "msa" / f"{cid}.a3m")
         feats, depth = pi_models.features_for(
-            args.model, model, seq, str(a3m), work=work / cid)
+            args.model, model, seq, a3m, work=work / cid)
         depths.append(depth)
         o = model.model_output(features=feats, recycling_steps=args.recycles,
                                sampling_steps=args.sampling_steps,
@@ -78,6 +80,7 @@ def main():
     out["n_bins"] = np.array(e.n_bins)
     out["bin_centres"] = e.centres
     out["msa_depth"] = np.array(depths)
+    out["single_sequence"] = np.array(bool(args.single_sequence))
     out["mutations"] = np.array([man.get(i, {}).get("mutations", "") for i in ids])
     np.savez_compressed(args.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
