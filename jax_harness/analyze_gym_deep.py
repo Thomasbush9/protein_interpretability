@@ -61,9 +61,18 @@ def main():
         if "smoke" in f:
             continue
         d = np.load(f)
-        model = str(d["model"]); y, pos = d["score"], d["pos"]
+        model = str(d["model"]) if "model" in d.files else "boltz2"
+        y, pos = d["score"], d["pos"]
         nL = int(d["n_layers"]); meta[model] = nL
-        X = np.concatenate([d[b] for b in BLOCKS], axis=1)      # [n, 4*nL]
+        # Boltz-2's exp_gym2 stores dz_site/ds_site as full vectors
+        # [n, L, C]; OF3/Protenix store their norms [n, L]. Reduce to the same
+        # quantity rather than letting one model contribute C times as many
+        # columns to the ridge.
+        blocks = []
+        for b in BLOCKS:
+            v = d[b]
+            blocks.append(np.linalg.norm(v, axis=-1) if v.ndim == 3 else v)
+        X = np.concatenate(blocks, axis=1)                      # [n, 4*nL]
         caw = d["ca_wt"].astype(float)
         tm = np.array([geom.tm_score(c.astype(float), caw) for c in d["ca"]])
         rng = np.random.default_rng(0)
@@ -75,7 +84,10 @@ def main():
             rt = spearmanr(tm[te], y[te]).correlation
             per[model]["internal (deep)"].append(ri)
             per[model]["TM to WT"].append(rt)
-            per[model]["pLDDT"].append(spearmanr(d["plddt_mean"][te], y[te]).correlation)
+            # exp_gym2 names it `plddt`; exp_gym_deep names it `plddt_mean`
+            pl = d["plddt_mean"] if "plddt_mean" in d.files else d["plddt"]
+            pl = pl.mean(-1) if pl.ndim > 1 else pl
+            per[model]["pLDDT"].append(spearmanr(pl[te], y[te]).correlation)
             per[model]["pLDDT@site"].append(spearmanr(d["plddt_site"][te], y[te]).correlation)
             tp, tv = pos[tr], y[tr]
             pred = np.array([tv[np.argmin(np.abs(tp - p))] for p in pos[te]])
