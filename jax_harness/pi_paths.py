@@ -93,8 +93,13 @@ def build_hybrid(emb_recipient, emb_donor, feats_recipient, feats_donor, routes)
                     else:
                         out[k] = v
                 return out
-            feats_recipient = _trim(feats_recipient, msa_r.shape[1], n)
-            feats_donor = _trim(feats_donor, msa_d.shape[1], n)
+            old_r, old_d = msa_r.shape[1], msa_d.shape[1]
+            feats_recipient = _trim(feats_recipient, old_r, n)
+            feats_donor = _trim(feats_donor, old_d, n)
+            # `feats` was copied from feats_recipient BEFORE this trim, so it
+            # still holds full-depth companions; rebuild it or `msa` ends up
+            # truncated while deletion_value/has_deletion do not.
+            feats = _trim(feats, old_r, n)
             msa_r, msa_d = feats_recipient["msa"], feats_donor["msa"]
         msa = msa_r
         if "msa_query" in routes:
