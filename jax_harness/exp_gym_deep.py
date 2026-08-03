@@ -20,9 +20,19 @@ counts differ too (256 / 192 / 64). That is fine and is not a confound: the clai
 is a PAIRED within-model comparison of internal against output, not a contest
 between models' feature counts.
 
-Capture fidelity is checked once per run against the model's own trunk, and the
-run aborts if the drift is not small compared with the mutation signal -- see
-pi_capture.assert_matches_forward and signal_to_drift.
+All three models run through THIS script, so variant selection, feature
+definitions, alignment handling, recycles and sampling steps are identical
+across them by construction. Earlier, Boltz-2's per-layer features came from
+exp_gym2.py, which samples 250 variants at random and reads a sampled subset of
+residue pairs, while this script spreads 100 variants across the sorted score
+range and uses all pairs; the two overlapped by only ~20 variants per assay, so
+the models could be compared to their own outputs but not to each other.
+
+Capture fidelity is checked twice per run and the run ABORTS on failure: the
+captured final z is compared against the model's own trunk output
+(pi_capture.verify_capture), and the first real mutation must move z far more
+than that drift (pi_capture.check_signal_to_drift). Both numbers are saved into
+the output archive next to the features they license.
 """
 
 from __future__ import annotations
@@ -50,12 +60,23 @@ def softmax(x):
 
 def distogram_per_layer(name, inner, z_layers, mask):
     """Logit lens: the model's own distogram head applied to every layer."""
-    import jax.numpy as jnp
-    head = (inner.aux_heads.distogram if name == "of3" else inner.distogram_head)
     out = []
     for L in range(z_layers.shape[0]):
         zl = z_layers[L]
-        lg = np.asarray(head(z=zl) if name == "of3" else head(zl))
+        if name == "of3":
+            lg = np.asarray(inner.aux_heads.distogram(z=zl))
+        elif name == "protenix":
+            lg = np.asarray(inner.distogram_head(zl))
+        else:
+            # Boltz-2's head returns [B, N, N, n_distograms, n_bins] and needs a
+            # 4-D input (it does a `b n m d -> b m n d` rearrange internally).
+            # The generic leading-axis squeeze below would strip the wrong axis
+            # here -- [1,N,N,1,64] -> [N,1,64] -- so index it explicitly.
+            if zl.ndim == 3:
+                zl = zl[None]
+            out.append(softmax(np.asarray(
+                inner.distogram_module(zl)[0, :, :, 0, :])[np.ix_(mask, mask)]))
+            continue
         while lg.ndim > 3:
             lg = lg[0]
         out.append(softmax(lg[np.ix_(mask, mask)]))
@@ -64,7 +85,8 @@ def distogram_per_layer(name, inner, z_layers, mask):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, choices=["of3", "protenix"])
+    ap.add_argument("--model", required=True,
+                    choices=["of3", "protenix", "boltz2"])
     ap.add_argument("--assay", required=True)
     ap.add_argument("--assay-dir", required=True)
     ap.add_argument("--a3m", required=True)
@@ -105,23 +127,45 @@ def main():
     def featurise(seq, tag):
         a3m = work / "msa" / f"{tag}.a3m"
         graft_a3m(a3m, src, seq, wt, cap=args.msa_cap)
-        return pi_models.features_for(args.model, wrapper, seq, str(a3m),
-                                      work=work / tag)
+        feats, depth = pi_models.features_for(args.model, wrapper, seq, str(a3m),
+                                              work=work / tag)
+        # Boltz-2 replaces the alignment with a one-row dummy when the a3m query
+        # does not match the input, which silently changes the computation being
+        # captured. Catch it here rather than discovering it in the numbers.
+        if depth < 2:
+            raise AssertionError(
+                f"{tag}: alignment collapsed to {depth} row(s); the model is not "
+                "seeing the alignment this run is supposed to control.")
+        return feats, depth
+
+    depths = []
 
     def run(seq, tag):
-        feats, _ = featurise(seq, tag)
+        feats, depth = featurise(seq, tag)
+        depths.append(depth)
         cap = cap_fn(inner, feats, num_recycles=args.recycles, key=key)
         out = wrapper.model_output(features=feats, recycling_steps=args.recycles,
                                    sampling_steps=args.sampling_steps, key=key)
         e = pi_models.extraction_from(out, name=args.model)
-        mask = (np.asarray(feats.token_mask[0]).astype(bool) if args.model == "of3"
-                else np.ones(e.ed.shape[0], bool))
-        return cap, e, mask
+        if args.model == "of3":
+            mask = np.asarray(feats.token_mask[0]).astype(bool)
+        elif args.model == "boltz2":
+            # boltz2 features are a plain dict, not an attribute-style Batch
+            mask = np.asarray(feats["token_pad_mask"][0]).astype(bool)
+        else:
+            mask = np.ones(e.ed.shape[0], bool)
+        return cap, feats, e, mask
 
-    cap_wt, e_wt, mask = run(wt, "wt")
-    # fidelity: the capture must describe the computation the model actually ran
-    drift = pi_capture.assert_matches_forward(args.model, cap_wt["z"], cap_wt["z"],
-                                              tol=1e9)  # shape check only
+    cap_wt, feats_wt, e_wt, mask = run(wt, "wt")
+    # Fidelity: the capture must describe the computation the model actually ran.
+    # This compares the captured final z against the model's OWN trunk output and
+    # raises if they disagree beyond the per-model tolerance. An earlier version
+    # compared cap_wt["z"] with itself at tol=1e9, which is a shape check and
+    # cannot fail -- the per-layer features below were unverified because of it.
+    drift = pi_capture.verify_capture(args.model, inner, feats_wt, cap_wt,
+                                      num_recycles=args.recycles, key=key)
+    print(f"[{time.time()-t0:6.1f}s] capture drift vs real trunk: rel {drift:.3e} "
+          f"(tol {pi_capture.DRIFT_TOL[args.model]:g})", flush=True)
     p_wt = distogram_per_layer(args.model, inner, cap_wt["z_layers"], mask)
     z_wt = np.asarray(cap_wt["z_layers"])
     s_wt = np.asarray(cap_wt["s_layers"])
@@ -130,9 +174,19 @@ def main():
           f"distogram {p_wt.shape[-1]} bins, pLDDT {e_wt.plddt.mean():.3f}", flush=True)
 
     rec, cas = [], []
+    ratio = None
     for n, r in enumerate(picked):
         pos = int(re.match(r"[A-Z](\d+)", r["mutant"]).group(1)) - 1
-        cap, e, _ = run(r["mutated_sequence"], "mut")
+        cap, _, e, _ = run(r["mutated_sequence"], "mut")
+        if ratio is None:
+            # A small drift only means something next to the effect being
+            # measured. Check once, on the first real mutation, before spending
+            # an hour on variants whose features would be capture noise.
+            sig, ratio = pi_capture.check_signal_to_drift(
+                args.model, cap["z"], cap_wt["z"], drift)
+            print(f"[{time.time()-t0:6.1f}s] one-mutation signal rel {sig:.3e}; "
+                  f"signal/drift {ratio:.0f}x "
+                  f"(need {pi_capture.MIN_SIGNAL_TO_DRIFT:g}x)", flush=True)
         p = distogram_per_layer(args.model, inner, cap["z_layers"], mask)
         zl = np.asarray(cap["z_layers"]); sl = np.asarray(cap["s_layers"])
 
@@ -166,6 +220,14 @@ def main():
         out[k] = np.stack([r[k] for r in rec])        # [n_variants, n_layers]
     out["ca"] = np.stack(cas).astype(np.float32)      # TM on a login node
     out["ca_wt"] = e_wt.ca.astype(np.float32)
+    # the fidelity evidence travels with the features it licenses
+    out["capture_drift"] = np.array(drift)
+    out["signal_to_drift"] = np.array(ratio if ratio is not None else np.nan)
+    out["drift_tol"] = np.array(pi_capture.DRIFT_TOL[args.model])
+    out["msa_depth"] = np.array(depths[0] if depths else -1)
+    out["recycles"] = np.array(args.recycles)
+    out["msa_cap"] = np.array(args.msa_cap)
+    out["sampling_steps"] = np.array(args.sampling_steps)
     out["model"] = np.array(args.model)
     out["assay"] = np.array(args.assay)
     out["n_layers"] = np.array(nL)

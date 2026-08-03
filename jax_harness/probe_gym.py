@@ -33,15 +33,24 @@ import argparse
 import json
 from pathlib import Path
 
+import sys
+
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+import pi_stats  # noqa: E402
 
 
 def spearman(x, y):
-    rx = np.argsort(np.argsort(x)).astype(float)
-    ry = np.argsort(np.argsort(y)).astype(float)
-    rx -= rx.mean(); ry -= ry.mean()
-    d = np.sqrt((rx ** 2).sum() * (ry ** 2).sum())
-    return float((rx * ry).sum() / d) if d > 0 else 0.0
+    """Tie-aware, via pi_stats. Re-exported because fig_gym.py imports it here.
+
+    The previous implementation ranked with `np.argsort(np.argsort(x))`, which
+    breaks ties by array order rather than averaging them, and returned 0.0 for a
+    constant predictor instead of NaN. Both mattered: the position-only baseline
+    below is constant on held-out rows, and that artefact is where the reported
+    +0.069 came from.
+    """
+    return pi_stats.spearman(x, y)
 
 
 def ridge_fit(X, y, lam=1.0):

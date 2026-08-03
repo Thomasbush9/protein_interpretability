@@ -30,7 +30,8 @@
 input:
   # Directory containing per-sequence subdirs or a flat dir of yamls
   # (discovered recursively via rglob '*.yaml').
-  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/p20/outputs/sequences
+  sequences_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/msa-swapping/sequences
+
 
   # Optional: only run on yamls whose stem matches one of the lines in this file.
   # Leave null to run on every yaml found.
@@ -38,7 +39,8 @@ input:
 
 output:
   # Where per-chunk outputs will be written.
-  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/outputs/p20/tri_att
+  out_dir: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/multi_mut/augmented/msa-swapping/hidden_reps
+
 
   # Staging directory for yaml symlink chunks. Defaults to <out_dir>/_staging.
   staging_dir: null
@@ -55,7 +57,7 @@ boltz:
   # tri_att_*_weights are in `layer_sites` — the patched triangular forward
   # is eager-only, while other modules (AttentionPairBias, tri_mul, ...)
   # still use kernels unless this is true.
-  no_kernels: true
+  no_kernels: false
 
 # Which attention-weight sites to capture.
 #   layers      — pairformer layer indices: list of ints, or "all"
@@ -74,8 +76,8 @@ boltz:
 #   average_heads — if true, reduce head dim before saving.
 #   save_format   — pt | npz (npz flattens multi-step keys as 'step_X__name')
 extraction:
-  layers: [0, 11, 23, 34, 44, 55, 63]
-  layer_sites: [tri_att_start_weights, tri_att_end_weights]
+  layers: all
+  layer_sites: [pwa_weights]
   recycling_steps_to_save: "0,5,-1"
   average_heads: false
   save_format: pt

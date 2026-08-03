@@ -10,6 +10,7 @@ import numpy as np
 from scipy.stats import spearmanr
 sys.path.insert(0, str(Path(__file__).parent))
 import geom  # noqa
+import pi_stats  # noqa
 from analyze_gym_multi import grouped_split  # noqa
 from analyze_gym_deep import fit_deep, BLOCKS  # noqa
 
@@ -22,13 +23,17 @@ plt.rcParams.update({**({"font.family":"sans-serif","font.sans-serif":[_s]} if _
     "font.size":9,"axes.unicode_minus":False,"axes.spines.top":False,"axes.spines.right":False})
 PAL={"boltz2":"#2a78d6","of3":"#eb6834","protenix":"#159a8c"}
 NICE={"boltz2":"Boltz-2","of3":"OpenFold3","protenix":"Protenix"}
-ORDER=["internal (deep)","TM to WT","pLDDT","pLDDT@site","position-only"]
+ORDER=["internal (deep)","TM to WT","pLDDT","pLDDT@site","nearest-position"]
 
 def collect(files, splits=5):
-    per=defaultdict(lambda: defaultdict(list)); gaps=defaultdict(list); meta={}
+    """Per model, per predictor, per ASSAY -- the assay is the independent unit."""
+    per=defaultdict(lambda: defaultdict(list)); gaps=defaultdict(dict); meta={}
     for f in sorted(files):
-        d=np.load(f); m=str(d["model"]) if "model" in d.files else "boltz2"
+        d=np.load(f, allow_pickle=True)
+        m=str(d["model"]) if "model" in d.files else "boltz2"
+        assay=str(d["assay"]) if "assay" in d.files else Path(f).stem
         y,pos=d["score"],d["pos"]; nL=int(d["n_layers"]); meta[m]=nL
+        gaps[m].setdefault(assay,[])
         X=np.concatenate([np.linalg.norm(d[b],axis=-1) if d[b].ndim==3 else d[b]
                           for b in BLOCKS],axis=1)
         caw=d["ca_wt"].astype(float)
@@ -45,8 +50,8 @@ def collect(files, splits=5):
             per[m]["pLDDT@site"].append(spearmanr(d["plddt_site"][te],y[te]).correlation)
             tp,tv=pos[tr],y[tr]
             pr=np.array([tv[np.argmin(np.abs(tp-p))] for p in pos[te]])
-            per[m]["position-only"].append(spearmanr(pr,y[te]).correlation)
-            gaps[m].append(ri-rt)
+            per[m]["nearest-position"].append(spearmanr(pr,y[te]).correlation)
+            gaps[m][assay].append(ri-rt)
     return per,gaps,meta
 
 def main():
@@ -77,36 +82,42 @@ def main():
                  fontweight="bold",color=INK,pad=20)
     ax.text(0,1.02,"internal is now 4 quantities x EVERY Pairformer layer, as in the headline",
             transform=ax.transAxes,fontsize=8.1,color=INK2,va="bottom")
-    ax=fig.add_subplot(gs[0,1]); rng=np.random.default_rng(0)
+    ax=fig.add_subplot(gs[0,1])
+    jit=np.random.default_rng(0)
     for k,m in enumerate(models):
-        g=np.array(gaps[m])
-        bs=np.array([np.nanmean(g[i]) for i in
-                     (rng.integers(0,len(g),len(g)) for _ in range(4000))])
-        lo,hi=np.percentile(bs,[2.5,97.5])
-        ax.errorbar([k],[g.mean()],yerr=[[g.mean()-lo],[hi-g.mean()]],fmt="o",ms=9,
-                    color=PAL[m],capsize=4,lw=1.6)
-        ax.text(k,hi+.012,f"{g.mean():+.3f}",ha="center",va="bottom",fontsize=8.6,color=INK)
+        # the ASSAY is the independent unit, not the split
+        pt,lo,hi,_=pi_stats.cluster_bootstrap(gaps[m],n_boot=10000,seed=0)
+        ax.errorbar([k],[pt],yerr=[[pt-lo],[hi-pt]],fmt="o",ms=9,
+                    color=PAL[m],capsize=4,lw=1.6,zorder=4)
+        per_assay=[np.nanmean(v) for v in gaps[m].values() if len(v)]
+        ax.scatter(k+jit.uniform(-.10,.10,len(per_assay)),per_assay,s=22,
+                   color=PAL[m],alpha=.45,edgecolor="#fcfcfb",linewidth=.8,zorder=3)
+        ax.text(k,hi+.012,f"{pt:+.3f}",ha="center",va="bottom",fontsize=8.6,color=INK)
     ax.axhline(0,color=INK,lw=1.1,ls="--")
     ax.set_xticks(range(len(models))); ax.set_xticklabels([NICE[m] for m in models],fontsize=8.6)
-    ax.set_ylabel("internal minus TM-to-WT"); ax.set_ylim(-.05,.52)
-    ax.set_title("B   the gap, with 95 % CI",loc="left",fontsize=11,fontweight="bold",
-                 color=INK,pad=20)
-    ax.text(0,1.02,"all three clear zero",transform=ax.transAxes,fontsize=8.1,
-            color=INK2,va="bottom")
-    fig.text(.06,.945,"With matched feature construction, the trunk beats the emitted "
-             "structure in all three models",fontsize=13,fontweight="bold",color=INK)
+    ax.set_ylabel("internal minus TM-to-WT"); ax.set_ylim(-.20,.62)
+    ax.set_title("B   the gap, 95 % CI over ASSAYS",loc="left",fontsize=11,
+                 fontweight="bold",color=INK,pad=20)
+    ax.text(0,1.02,"all three clear zero; dots are the 4 individual assays",
+            transform=ax.transAxes,fontsize=8.1,color=INK2,va="bottom")
+    fig.text(.06,.945,"With matched variants and a capture check that can fail, the trunk beats "
+             "the emitted structure in all three models",fontsize=13,fontweight="bold",color=INK)
     fig.text(.06,.80,
-        "Same 4 assays, position-grouped splits, identical rows per predictor. Internal = "
-        "kl_glob, kl_site, dz_site, ds_site at EVERY Pairformer layer -- the construction the\n"
-        "Boltz-2 headline uses -- so these are no longer the 5-feature shortcut and no longer "
-        "carry that caveat. Boltz-2 here scores 0.542 against its 12-assay headline of 0.548.\n"
-        "Remaining differences: Boltz-2 uses 250 variants and pair-sampled per-layer features; "
-        "OpenFold3 and Protenix use 100 variants and all-pairs.",
+        "Same 4 assays and the SAME VARIANT IDs, alignments, recycles, sampling steps and folds for "
+        "every model -- all three now run through one script. Internal = kl_glob, kl_site,\n"
+        "dz_site, ds_site at EVERY Pairformer layer. Every per-layer feature was regenerated after "
+        "the capture-fidelity check was made capable of failing; drift against each model's\n"
+        "own trunk is 0.0 / 6.2e-4 / 4.6e-4 with a 400-660x mutation signal. Intervals treat the "
+        "ASSAY as the independent unit, so they are ~2x wider than the split-level ones\n"
+        "they replace. These are PAIRED WITHIN-MODEL comparisons, not a ranking: trunk depth "
+        "(64/48/16) and distogram grids differ, and the per-assay dots in B overlap heavily.",
         fontsize=8.3,color=INK2)
     Path(a.out).parent.mkdir(parents=True,exist_ok=True)
     fig.savefig(a.out,dpi=190,facecolor=fig.get_facecolor()); print(f"wrote {a.out}")
     for m in models:
+        pt,lo,hi,nk=pi_stats.cluster_bootstrap(gaps[m],n_boot=10000,seed=0)
         print(f"  {NICE[m]:11s} internal {np.nanmean(per[m]['internal (deep)']):+.3f}  "
-              f"TM {np.nanmean(per[m]['TM to WT']):+.3f}  gap {np.mean(gaps[m]):+.3f}")
+              f"TM {np.nanmean(per[m]['TM to WT']):+.3f}  "
+              f"gap {pt:+.3f} [{lo:+.3f}, {hi:+.3f}] over {nk} assays")
 
 if __name__=="__main__": main()

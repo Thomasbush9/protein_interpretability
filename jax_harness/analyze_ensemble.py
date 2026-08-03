@@ -14,17 +14,16 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 from geom import tm_score
 
-def rank(x): return np.argsort(np.argsort(x)).astype(float)
-def spearman(x, y):
-    rx, ry = rank(x), rank(y); rx -= rx.mean(); ry -= ry.mean()
-    d = np.sqrt((rx**2).sum()*(ry**2).sum())
-    return float((rx*ry).sum()/d) if d > 0 else 0.0
+import pi_stats  # noqa: E402
+
+# Tie-aware, and a standard partial correlation: the previous local versions
+# ranked with argsort-of-argsort (which breaks ties by array order) and
+# re-ranked their own residuals before correlating.
+spearman = pi_stats.spearman
+
+
 def partial_spearman(x, y, Zs):
-    rx, ry = rank(x), rank(y)
-    Z = np.column_stack([rank(z) for z in Zs] + [np.ones(len(x))])
-    def res(v):
-        c, *_ = np.linalg.lstsq(Z, v, rcond=None); return v - Z @ c
-    return spearman(res(rx), res(ry))
+    return pi_stats.partial_spearman(x, y, list(Zs))
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--features", nargs="+", required=True); ap.add_argument("--out", required=True)

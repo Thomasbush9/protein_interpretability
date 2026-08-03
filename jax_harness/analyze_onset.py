@@ -41,25 +41,24 @@ sys.path.insert(0, str(Path(__file__).parent))
 from build_dataset import parse_cif_ca  # noqa: E402
 
 
+import pi_stats  # noqa: E402
+
+
 def spearman(x, y):
-    rx = np.argsort(np.argsort(x)).astype(float)
-    ry = np.argsort(np.argsort(y)).astype(float)
-    rx -= rx.mean(); ry -= ry.mean()
-    d = np.sqrt((rx ** 2).sum() * (ry ** 2).sum())
-    return float((rx * ry).sum() / d) if d > 0 else float("nan")
+    """Tie-aware, via pi_stats."""
+    return pi_stats.spearman(x, y)
 
 
 def partial_spearman(x, y, z):
-    """Spearman(x, y) controlling for z, via ranks + linear residualisation."""
-    r = lambda v: np.argsort(np.argsort(v)).astype(float)  # noqa: E731
-    rx, ry, rz = r(x), r(y), r(z)
+    """Spearman(x, y) controlling for z.
 
-    def resid(a, b):
-        b1 = np.stack([b, np.ones_like(b)], 1)
-        coef, *_ = np.linalg.lstsq(b1, a, rcond=None)
-        return a - b1 @ coef
-
-    return spearman(resid(rx, rz), resid(ry, rz))
+    The previous version residualised the ranks and then RE-RANKED the
+    residuals before correlating, which undoes part of the adjustment. This
+    delegates to the standard procedure (Pearson correlation of the residuals).
+    Note that this file computes onset TIMING, not magnitude; the magnitude
+    statistic the report quotes for section 4.7 lives in analyze_spatial.py.
+    """
+    return pi_stats.partial_spearman(x, y, [z])
 
 
 def main():
