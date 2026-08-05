@@ -76,6 +76,10 @@ def main():
     ap.add_argument("--glob", default="runs/deep2_*.npz")
     ap.add_argument("--splits", type=int, default=5)
     ap.add_argument("--n-boot", type=int, default=10000)
+    ap.add_argument("--match-depth", type=int, default=0,
+                    help="resample every model's per-layer features onto this many "
+                         "evenly spaced RELATIVE depths, so all models contribute "
+                         "the same number of features (0 = use every layer)")
     args = ap.parse_args()
 
     per = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -101,8 +105,18 @@ def main():
         blocks = []
         for b in BLOCKS:
             v = d[b]
-            blocks.append(np.linalg.norm(v, axis=-1) if v.ndim == 3 else v)
-        X = np.concatenate(blocks, axis=1)                      # [n, 4*nL]
+            v = np.linalg.norm(v, axis=-1) if v.ndim == 3 else v   # [n, nL]
+            if args.match_depth:
+                # Trunk depths differ (64 / 48 / 16), so "every layer" gives the
+                # models different feature counts. Reading the same number of
+                # evenly spaced RELATIVE depths instead makes the design matrices
+                # identical in width, at the cost of not seeing every Boltz-2
+                # layer. Linear interpolation along the layer axis, per variant.
+                src = np.linspace(0.0, 1.0, v.shape[1])
+                dst = np.linspace(0.0, 1.0, args.match_depth)
+                v = np.stack([np.interp(dst, src, row) for row in v])
+            blocks.append(v)
+        X = np.concatenate(blocks, axis=1)                      # [n, 4*depth]
         caw = d["ca_wt"].astype(float)
         tm = np.array([geom.tm_score(c.astype(float), caw) for c in d["ca"]])
         pl = d["plddt_mean"] if "plddt_mean" in d.files else d["plddt"]
