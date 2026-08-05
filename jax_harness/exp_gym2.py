@@ -42,8 +42,40 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_core as pi  # noqa: E402
+import pi_conf  # noqa: E402
 from exp_gym import YAML_TMPL, graft_a3m, skl  # noqa: E402
 from joltz import TrunkState  # noqa: E402
+
+
+def _softmax(x):
+    x = x - x.max(-1, keepdims=True)
+    e = np.exp(x)
+    return e / e.sum(-1, keepdims=True)
+
+
+def shape_features(lw_p, mu_w, sd_w, logits_m, at):
+    """Split each layer's mutant-vs-WT divergence into relocation and broadening.
+
+    `kl_glob` and `kl_site` cannot distinguish a distogram that MOVES to a new
+    distance from one that merely FLATTENS at the same distance, and those two
+    support different claims -- geometry versus confidence. The Gaussian
+    Jeffreys split separates them exactly (see `pi_conf.jeffreys_split`), so the
+    probe can be re-run on each half and asked which one it was actually using.
+
+    Returned per layer, matching the layout of kl_glob / kl_site so the two sets
+    of features are interchangeable downstream.
+    """
+    p_m = _softmax(logits_m.astype(np.float32))          # [L, P, 64]
+    mu_m, sd_m = pi_conf.moments(p_m)
+    shift, spread = pi_conf.jeffreys_split(mu_w, sd_w, mu_m, sd_m)   # [L, P]
+    dmu, dsd = np.abs(mu_m - mu_w), sd_m - sd_w          # dsd SIGNED: + is broader
+    L = logits_m.shape[0]
+    z = np.zeros(L, np.float32)
+    out = {}
+    for nm, v in (("shift", shift), ("spread", spread), ("dmu", dmu), ("dsd", dsd)):
+        out[f"{nm}_glob"] = v.mean(1).astype(np.float32)
+        out[f"{nm}_site"] = (v[:, at].mean(1) if at.any() else z).astype(np.float32)
+    return out
 
 
 def trunk_capture(model, feats, ii, jj, row, *, recycles, key):
@@ -153,11 +185,14 @@ def main():
     emb_w, tr_w, ref = trunk_capture(model, f_wt, ii, jj, 0, recycles=args.recycles, key=key)
     lw = np.asarray(ref["logits"])
     L = lw.shape[0]
+    # WT moments are fixed across variants, so pay for them once.
+    mu_w, sd_w = pi_conf.moments(_softmax(lw.astype(np.float32)))
     pl_wt_mean, _, ca_wt = structure_of(emb_w, tr_w, f_wt, 0)
     print(f"[{time.time()-t0:6.1f}s] WT: {L} layers, pLDDT {pl_wt_mean:.3f}", flush=True)
     h.cleanup()
 
     Z, S, KLg, KLs, PL, PLs, CA, DIS, meta = [], [], [], [], [], [], [], [], []
+    SHP = []
     for n, r in enumerate(rows):
         mo = re.match(r"([A-Z])(\d+)([A-Z])", r["mutant"])
         p0 = int(mo.group(2)) - 1
@@ -168,8 +203,10 @@ def main():
         # the WT reference for z_site/s_site must be taken at the SAME residue
         _, _, refr = trunk_capture(model, f_wt, ii, jj, row, recycles=args.recycles, key=key)
         emb_m, tr_m, cur = trunk_capture(model, f_m, ii, jj, row, recycles=args.recycles, key=key)
-        kl = skl(np.asarray(cur["logits"]), lw)
+        lm = np.asarray(cur["logits"])
+        kl = skl(lm, lw)
         at = (ii_np == p0) | (jj_np == p0)
+        SHP.append(shape_features(lw, mu_w, sd_w, lm, at))
         pm, ps, ca = structure_of(emb_m, tr_m, f_m, row)
         # distogram at the trunk output, as a probability vector over the
         # sampled pairs -- the last representation before the structure module
@@ -185,9 +222,10 @@ def main():
         if (n + 1) % 25 == 0:
             print(f"[{time.time()-t0:6.1f}s] {n+1}/{len(rows)}", flush=True)
 
+    shape = {k: np.stack([s[k] for s in SHP]) for k in SHP[0]} if SHP else {}
     np.savez_compressed(
         args.out, dz_site=np.stack(Z), ds_site=np.stack(S),
-        kl_glob=np.stack(KLg), kl_site=np.stack(KLs),
+        kl_glob=np.stack(KLg), kl_site=np.stack(KLs), **shape,
         plddt=np.array(PL), plddt_site=np.array(PLs),
         plddt_wt=pl_wt_mean, n_layers=L,
         ca=np.stack(CA), ca_wt=ca_wt, disto=np.stack(DIS),

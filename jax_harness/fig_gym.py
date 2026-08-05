@@ -58,10 +58,11 @@ gs = fig.add_gridspec(2, 3, hspace=0.50, wspace=0.30)
 
 # --- A: every predictor, assay dots behind pooled bars -----------------
 axA = fig.add_subplot(gs[0, :2])
-ORDER = ["internal", "chemistry", "identity", "output_ridge", "pLDDT_mean",
-         "TM_to_WT", "pLDDT_site", "nearest_position"]
+ORDER = ["internal", "chemistry", "identity", "output_ridge", "output_rich",
+         "pLDDT_mean", "TM_to_WT", "pLDDT_site", "nearest_position"]
 LABEL = {"internal": "internal\n(Pairformer)", "chemistry": "substitution\nchemistry",
          "identity": "residue\nidentity", "output_ridge": "output ridge\n(TM+pLDDT)",
+         "output_rich": "output rich\n(10 emitted)",
          "pLDDT_mean": "pLDDT\nmean", "TM_to_WT": "TM to\nwild type",
          "pLDDT_site": "pLDDT at\nthe site", "nearest_position": "nearest\nposition"}
 COL = {"internal": C_INT, "chemistry": C_CHEM, "identity": C_CHEM}
@@ -96,7 +97,7 @@ axA.annotate("bars = mean over 12 assays · black line = 95 % CI\n"
 # --- B: the paired gaps that carry the claim ---------------------------
 axB = fig.add_subplot(gs[0, 2])
 GAPS = [("vs TM to WT", "internal - TM_to_WT"),
-        ("vs output ridge", "internal - output_ridge"),
+        ("vs output rich", "internal - output_rich"),
         ("vs identity", "internal - identity"),
         ("vs chemistry", "internal - chemistry")]
 y = np.arange(len(GAPS))

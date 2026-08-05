@@ -56,11 +56,58 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import geom  # noqa: E402
 import pi_chem  # noqa: E402
 import pi_stats  # noqa: E402
 from geom import tm_score  # noqa: E402
 
 BLOCKS = ["kl_glob", "kl_site", "dz_site", "ds_site"]
+
+
+OUTPUT_FEATURES = ["tm_to_wt", "rmsd_global", "rmsd_local_8A", "rmsd_local_12A",
+                   "disp_at_site", "disp_max", "d_radius_gyration",
+                   "plddt_mean", "plddt_site", "plddt_mean_minus_site"]
+
+
+def output_matrix(ca, ca_wt, tm_wt, plddt, plddt_site, pos):
+    """Everything the model EMITS, as a design matrix -- the fair output baseline.
+
+    A single unfitted number is not a handicap under a rank metric: any monotone
+    transform of TM leaves its Spearman exactly unchanged, so fitting one
+    predictor cannot improve it. The real asymmetry is that the internal side
+    gets 256 features and the output side gets one. This closes that by giving
+    the structure module the richest description of its own product that the
+    saved coordinates allow, fitted through the identical ridge protocol.
+
+    Deliberately excluded: the trunk distogram. It is a head on the Pairformer,
+    not a product of the structure module, and including it would blur the
+    internal/output distinction the whole comparison rests on.
+    """
+    ca_wt = np.asarray(ca_wt, dtype=float)
+    n = len(ca)
+    rows = []
+    dwt = np.linalg.norm(ca_wt[:, None, :] - ca_wt[None, :, :], axis=-1)
+    rg_wt = float(np.sqrt(((ca_wt - ca_wt.mean(0)) ** 2).sum(1).mean()))
+    for i in range(n):
+        c = np.asarray(ca[i], dtype=float)
+        p = int(pos[i]) if int(pos[i]) < len(ca_wt) else 0
+        # superpose onto WT, then read displacements per residue
+        A, B = c - c.mean(0), ca_wt - ca_wt.mean(0)
+        R = geom.kabsch(A, B)
+        disp = np.linalg.norm(A @ R.T - B, axis=1)
+        near8 = dwt[p] <= 8.0
+        near12 = dwt[p] <= 12.0
+        rg = float(np.sqrt(((c - c.mean(0)) ** 2).sum(1).mean()))
+        rows.append([
+            tm_wt[i],
+            float(np.sqrt((disp ** 2).mean())),
+            float(np.sqrt((disp[near8] ** 2).mean())) if near8.any() else 0.0,
+            float(np.sqrt((disp[near12] ** 2).mean())) if near12.any() else 0.0,
+            float(disp[p]), float(disp.max()), rg - rg_wt,
+            float(plddt[i]), float(plddt_site[i]),
+            float(plddt[i]) - float(plddt_site[i]),
+        ])
+    return np.asarray(rows, dtype=float)
 
 
 def grouped_split(pos, frac, rng):
@@ -148,6 +195,7 @@ def main():
         tm_wt = np.array([tm_score(ca[i], ca_wt, seq, seq) for i in range(len(y))])
         pl, pls = d["plddt"], d["plddt_site"]
         X_out = np.column_stack([tm_wt, pl, pls])
+        X_out_rich = output_matrix(ca, ca_wt, tm_wt, pl, pls, pos)
         X_both = np.column_stack([X_int, X_chem])
 
         for s in range(a.seeds):
@@ -180,6 +228,10 @@ def main():
             per["output_ridge"][name].append(
                 fit_ridge_block(X_out, y, pos, tr, te, tune,
                                 ks=(3,), lams=(0.1, 1.0, 10.0))[0])
+            # the richest fair output baseline: everything the model emits
+            per["output_rich"][name].append(
+                fit_ridge_block(X_out_rich, y, pos, tr, te, tune,
+                                ks=(5, 10), lams=(0.1, 1.0, 10.0, 100.0))[0])
 
             # unfitted single-number predictors, identical rows
             per["TM_to_WT"][name].append(pi_stats.spearman(tm_wt[te], y[te]))
@@ -205,8 +257,8 @@ def main():
                      "ridge_k": int(k_i), "ridge_lambda": float(lam_i)}
 
     ORDER = ["internal", "internal+chem", "internal_fixed16", "chemistry",
-             "identity", "output_ridge", "TM_to_WT", "pLDDT_site", "pLDDT_mean",
-             "nearest_position", "position_only"]
+             "identity", "output_rich", "output_ridge", "TM_to_WT",
+             "pLDDT_site", "pLDDT_mean", "nearest_position", "position_only"]
     assays = sorted(res)
 
     # ---- per-assay table -------------------------------------------------
@@ -246,6 +298,7 @@ def main():
     gaps = {}
     for lab, kb in (("internal - TM_to_WT", "TM_to_WT"),
                     ("internal - pLDDT_site", "pLDDT_site"),
+                    ("internal - output_rich", "output_rich"),
                     ("internal - output_ridge", "output_ridge"),
                     ("internal - chemistry", "chemistry"),
                     ("internal - identity", "identity"),
