@@ -376,6 +376,90 @@ magnitude control had not been run.</p>
 </section>"""
 
 
+
+def sec_symmetry(Y):
+    if not Y:
+        return pending("Internal versus output with matched dimensionality")
+    CV, gaps = Y["components_view"], Y["paired_gaps"]
+    INT = "internal dz (last layer)"
+    ks = sorted(int(k) for k in CV[INT])
+    dims = Y["protocol"]["dims"]
+
+    def best(bn):
+        return max(CV[bn][str(k)]["mean"] for k in ks)
+
+    def dim(bn):
+        import statistics
+        return int(statistics.mean(dims[n][bn] for n in dims))
+
+    order = [INT] + sorted((b for b in CV if b != INT), key=lambda b: -best(b))
+    rows = "".join(
+        f"<tr><td>{b.replace('output ', 'output: ')}</td>"
+        f"<td class=n>{dim(b)}</td><td class=n>{best(b):+.3f}</td></tr>"
+        for b in order)
+    grows = ""
+    for b in order[1:]:
+        k = f"{b} @ k=32"
+        if k in gaps:
+            g = gaps[k]
+            grows += (f"<tr><td>{b.replace('output ', 'output: ')}</td>"
+                      f"<td class=n>{g['gap']:+.3f} <span class=ci>"
+                      f"[{g['ci_lo']:+.3f}, {g['ci_hi']:+.3f}]</span></td>"
+                      f"<td class=n>{g['wins']}/{g['n']}</td></tr>")
+    out_lo = min(best(b) for b in CV if b != INT)
+    out_hi = max(best(b) for b in CV if b != INT)
+    return f"""
+<section id=symmetry>
+<h2>Internal versus output, with the dimensional asymmetry removed</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">central claim</span>
+<h3>Giving the output side full dimensionality does not close the gap</h3></div>
+<p><code>compare_internal_output.output_matrix</code> already names the danger in
+its own docstring: the real risk to this comparison is that the internal side
+gets 256 features and the output side gets one, and it closes that by giving the
+structure module &ldquo;the richest description of its own product that the saved
+coordinates allow&rdquo;. That was true against four scalar summaries per layer.
+It stopped being true when the SVD study showed internal reaches +0.73 on its
+raw pair channels &mdash; because the output side was still ten hand-built
+numbers, and the coordinates allow far more.</p>
+<p>So both sides are run through one protocol here: identical position-grouped
+splits, standardisation, rotation and selection views, ridge with the same
+inner-fold &lambda; grid, the same k-grid and the same assay-level bootstrap.
+The internal side is deliberately handicapped &mdash; a <b>single layer, the
+last, fixed in advance</b>, with no layer search and no averaging over the depth
+window where the probe is known to be strongest.</p>
+<div class=scroll><table>
+<thead><tr><th>block</th><th>dimensions</th><th>best held-out &rho;</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>The output side was described at five sizes spanning ten to {dim(order[1]) if len(order)>1 else 0}
+dimensions, including one block that is every emitted quantity at once &mdash;
+full-dimensional geometry plus the hand-built summaries plus confidence. Its
+ceiling is {out_lo:+.3f} to {out_hi:+.3f} across all of them.</p>
+<div class=scroll><table>
+<thead><tr><th>paired difference at k = 32</th><th>internal &minus; output</th>
+<th>assays won</th></tr></thead>
+<tbody>{grows}</tbody></table></div>
+</div>
+<div class="card">
+<div class=row><span class="chip c-run">control</span>
+<h3>An estimator problem or an information problem?</h3></div>
+<p>&ldquo;Output does badly at 1741 dimensions&rdquo; could simply be the curse of
+dimensionality with 250 rows. It is not, and the shape of the result is what
+rules it out: the output ceiling is flat from ten dimensions to 1741, and the
+<em>best</em> output description is one of the smallest. Adding raw geometry
+actively hurts &mdash; the emitted coordinates are largely uninformative about
+stability, so extra dimensions dilute the few useful ones rather than adding to
+them. Internal, at 128 dimensions and one layer, sits far above the entire
+band.</p>
+<p class=ci>Remaining asymmetry, stated rather than buried: per-residue pLDDT was
+never archived, only the chain mean and the value at the mutated residue. The
+output side therefore gets full dimensionality in geometry but not in
+confidence. That is the one thing a re-capture could still change, and it is the
+first thing to do if anyone presses on this result.</p>
+</div>
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -386,10 +470,11 @@ def main():
     ap.add_argument("--drift", default=str(W / "runs/drift_v1.json"))
     ap.add_argument("--transfer", default=str(W / "runs/transfer_v1.json"))
     ap.add_argument("--pc2", default=str(W / "runs/pc2_v2.json"))
+    ap.add_argument("--symmetry", default=str(W / "runs/symmetry_v2.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
-    Q = load(a.pc2)
+    Q, Y = load(a.pc2), load(a.symmetry)
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -421,6 +506,15 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
   <code>fig_svd.py</code> from <code>svd_dz_v2.json</code>.</figcaption>
 </figure>
 
+<figure>
+  <img src="figures/symmetry.png" alt="Three panels: held-out Spearman against directions
+  kept for internal and five output blocks; paired per-assay differences at k=32; best
+  score against the number of dimensions given to each block.">
+  <figcaption>The internal/output comparison with matched treatment on both sides.
+  Generated by <code>fig_symmetry.py</code> from <code>symmetry_v2.json</code>.</figcaption>
+</figure>
+
+{sec_symmetry(Y)}
 {sec_dims(S, DS)}
 {sec_shared(S)}
 {sec_what(S)}
@@ -530,7 +624,7 @@ key.</li>
     (OUT / "index.html").write_text(html)
     print(f"wrote {OUT/'index.html'}  ({len(html)/1024:.0f} KB)")
     for nm, obj in (("svd dz", S), ("svd ds", DS), ("drift", Dj),
-                    ("transfer", TR), ("pc2", Q)):
+                    ("transfer", TR), ("pc2", Q), ("symmetry", Y)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
