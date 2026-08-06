@@ -460,6 +460,91 @@ first thing to do if anyone presses on this result.</p>
 </section>"""
 
 
+
+def sec_steer(T):
+    if not T:
+        return pending("Causal test: steering along PC2")
+    dr = T["drift"]["ca_rmsd"]
+    g = T["glob"]
+    cd = T["coordinates_vs_drift"]
+    rnd = [n for n in g["ca_rmsd"] if n.startswith("random")]
+    pc2_ca = g["ca_rmsd"]["PC2"]["even_mean"]
+    rlo = min(g["ca_rmsd"][n]["even_mean"] for n in rnd)
+    rhi = max(g["ca_rmsd"][n]["even_mean"] for n in rnd)
+    ratios = [abs(g[k][n]["ratio"]) for k in g for n in g[k]]
+    rows = "".join(
+        f"<tr><td>{m}</td>"
+        f"<td class=n>{min(v['median'] for v in cd[m].values()):.3f} &ndash; "
+        f"{max(v['median'] for v in cd[m].values()):.3f}</td>"
+        f"<td class=n>{'exceeds' if max(v['median'] for v in cd[m].values()) > dr else 'below'}</td></tr>"
+        for m in ("row", "sym", "glob") if m in cd)
+    return f"""
+<section id=steer>
+<h2>Causal test: is PC2 a lever, or only a readout?</h2>
+<div class="card amber">
+<div class=row><span class="chip c-amber">negative result</span>
+<h3>PC2 is readable but not privileged &mdash; there is no stability knob</h3></div>
+<p>Everything else in this report is decodability: the direction is there to be
+read. This asks whether the model <em>uses</em> it. PC2 is added to the final
+pair representation &mdash; the tensor the structure module is conditioned on
+&mdash; and the distogram, per-residue pLDDT and emitted coordinates are
+measured. Effect size cannot settle it, because any vector added to z moves the
+output; the tests that can are <b>sign structure</b> and <b>comparison against
+random directions of identical norm</b>.</p>
+<p><b>The response is magnitude-driven, not signed.</b> A direction the model
+held as a signed quantity would broaden at +&alpha; and sharpen at
+&minus;&alpha;. Decomposing each response into odd and even parts, the odd
+component is at most {100*max(ratios):.0f}% of the even one for every direction
+tested, PC2 included.</p>
+<p><b>PC2 is not stronger than a random direction.</b> Under global injection its
+coordinate response is {pc2_ca:.2f}&nbsp;&Aring; against a random range of
+{rlo:.2f}&ndash;{rhi:.2f}&nbsp;&Aring;. It is mid-pack on the distogram and on
+pLDDT too.</p>
+</div>
+<div class="card warn">
+<div class=row><span class="chip c-warn">correction</span>
+<h3>A one-row lever gave the opposite answer, and it was wrong</h3></div>
+<p>Injecting into a single row of z leaves the emitted structure below the
+sampler's own drift, which reads as &ldquo;the structure module ignores this
+channel&rdquo;. It does not. A real substitution perturbs the whole pair tensor,
+and when the injection matches that extent the coordinates move by
+&aring;ngstr&ouml;ms.</p>
+<div class=scroll><table>
+<thead><tr><th>injection</th><th>CA RMSD across directions (&Aring;)</th>
+<th>vs {dr:.2f}&nbsp;&Aring; sampler drift</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>The drift floor itself had to be measured rather than assumed, and an earlier
+version of this experiment got it wrong twice: &alpha;&nbsp;=&nbsp;0 reproduces
+the baseline exactly under deterministic sampling with a fixed key, so it is a
+determinism check and not a noise floor; and comparing raw coordinates without
+superposition read a change of diffusion key as an 18&nbsp;&Aring;
+conformational change, when the structures differed only by a rigid-body
+frame.</p>
+</div>
+<div class="card">
+<h3>What this does and does not support</h3>
+<ul>
+<li>It <b>sharpens</b> the claim about coordinates. The mechanism is not that the
+sampler ignores the trunk &mdash; it plainly does not. It is that the sampler
+responds to <em>how much</em> the pair representation changes and not to
+<em>which direction</em> it changes in, while severity is written into a
+specific direction.</li>
+<li>It <b>ends</b> the steering ambition. There is no direction here that can be
+turned up to make the model call a variant destabilising.</li>
+<li>It leaves the decodability results untouched: those are claims about what can
+be read out of the representation, and a failed intervention does not bear on
+them.</li>
+<li><b>Not established:</b> PC2's odd component does exceed all four random draws
+on two of three readouts under the global lever. With four draws that is worth
+roughly p&nbsp;&asymp;&nbsp;0.4 and is reported as a hint, not a result. A claim
+there needs on the order of twenty random directions.</li>
+<li>One assay (RCRO), one layer, one alignment. The negative is bounded
+accordingly.</li>
+</ul>
+</div>
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -471,10 +556,11 @@ def main():
     ap.add_argument("--transfer", default=str(W / "runs/transfer_v1.json"))
     ap.add_argument("--pc2", default=str(W / "runs/pc2_v2.json"))
     ap.add_argument("--symmetry", default=str(W / "runs/symmetry_v2.json"))
+    ap.add_argument("--steer", default=str(W / "runs/steer_RCRO_v4.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
-    Q, Y = load(a.pc2), load(a.symmetry)
+    Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -540,6 +626,16 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 </figure>
 
 {sec_drift(Dj)}
+
+<figure>
+  <img src="figures/steer.png" alt="Three panels: coordinate movement against perturbation
+  size for three injection extents; odd-over-even response ratio per direction; PC2
+  against random directions of identical norm.">
+  <figcaption>Injecting directions into the final pair representation. Generated by
+  <code>fig_steer.py</code> from <code>steer_RCRO_v4.*</code>.</figcaption>
+</figure>
+
+{sec_steer(T)}
 
 <section id=limits>
 <h2>What this does not establish</h2>
@@ -624,7 +720,8 @@ key.</li>
     (OUT / "index.html").write_text(html)
     print(f"wrote {OUT/'index.html'}  ({len(html)/1024:.0f} KB)")
     for nm, obj in (("svd dz", S), ("svd ds", DS), ("drift", Dj),
-                    ("transfer", TR), ("pc2", Q), ("symmetry", Y)):
+                    ("transfer", TR), ("pc2", Q), ("symmetry", Y),
+                    ("steer", T)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
