@@ -57,35 +57,65 @@ def zscore(a):
     return (a - a.mean(0)) / (a.std(0) + 1e-9)
 
 
+def zstats(a):
+    a = np.asarray(a, dtype=float)
+    return a.mean(0), a.std(0) + 1e-9
+
+
+def zapply(a, mu, sd):
+    return (np.asarray(a, dtype=float) - mu) / sd
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--features", nargs="+", required=True)
     ap.add_argument("--k", type=int, default=16)
+    ap.add_argument("--inductive", action="store_true",
+                    help="scale held-out features with TRAINING-assay statistics "
+                         "instead of the held-out assay's own")
     ap.add_argument("--lam", type=float, default=10.0)
+    ap.add_argument("--tm-cache",
+                    default="/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/"
+                            "prot_interp_files/runs/tm_cache.npz",
+                    help="tmtools is in the repo venv, not the container; "
+                         "precompute_tm.py writes this")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
+    TM = np.load(a.tm_cache)
     A = {}
     for f in a.features:
         d = np.load(f, allow_pickle=True)
-        name = Path(f).stem.replace("gym2_", "").split("_")[0]
+        # `.replace("gym2_", "")` silently collapsed every gym2s_* file to the
+        # single key "gym2s", leaving one assay in the dict. Split on position.
+        name = Path(f).stem.split("_")[1]
         y = d["score"]
         ca, ca_wt = d["ca"], d["ca_wt"]
         seq = str(d["wt_seq"])
-        tm = np.array([geom.tm_score(c.astype(float), ca_wt.astype(float))
-                       for c in ca])
-        A[name] = {
-            "y": y, "pos": d["pos"],
-            "yz": zscore(y),
-            "internal": zscore(np.concatenate(
+        # TM comes from the cache: tmtools lives in the repo venv and JAX in
+        # the container, and neither has the other. Recomputing it here would
+        # simply fail; dropping it would weaken the output baseline, which is
+        # the wrong direction to be sloppy in.
+        stem = Path(f).stem.split("_", 1)[1]
+        if stem not in TM:
+            raise SystemExit(f"{stem}: not in {a.tm_cache}; run precompute_tm.py")
+        tm = np.asarray(TM[stem], float)
+        # RAW blocks are kept alongside the z-scored ones. The published
+        # protocol scales every assay by its own statistics, which is
+        # unsupervised but transductive -- the held-out assay's rows decide its
+        # own scale. `--inductive` instead scales it with the training assays'
+        # statistics, so nothing about the held-out protein enters the fit.
+        raw = {
+            "internal": np.concatenate(
                 [d["kl_glob"], d["kl_site"],
                  np.linalg.norm(d["dz_site"], axis=-1),
-                 np.linalg.norm(d["ds_site"], axis=-1)], axis=1)),
-            "chemistry": zscore(pi_chem.chem_matrix([str(m) for m in d["mutant"]])),
-            "output_rich": zscore(output_matrix(
-                ca, ca_wt, tm, d["plddt"], d["plddt_site"], d["pos"])),
-            "tm": tm,
+                 np.linalg.norm(d["ds_site"], axis=-1)], axis=1),
+            "chemistry": pi_chem.chem_matrix([str(m) for m in d["mutant"]]),
+            "output_rich": output_matrix(
+                ca, ca_wt, tm, d["plddt"], d["plddt_site"], d["pos"]),
         }
+        A[name] = {"y": y, "pos": d["pos"], "yz": zscore(y), "tm": tm,
+                   "raw": raw, **{k: zscore(v) for k, v in raw.items()}}
         print(f"  loaded {name:8s} n={len(y):4d}  internal dim "
               f"{A[name]['internal'].shape[1]}")
 
@@ -102,12 +132,20 @@ def main():
     for held in names:
         tr_names = [n for n in names if n != held]
         for b in BLOCKS:
-            Xtr = np.concatenate([A[n][b] for n in tr_names], 0)
+            if a.inductive:
+                # one scale, learned on the training assays, applied to all
+                mu, sd = zstats(np.concatenate([A[n]["raw"][b] for n in tr_names], 0))
+                Xtr = np.concatenate([zapply(A[n]["raw"][b], mu, sd)
+                                      for n in tr_names], 0)
+                Xte = zapply(A[held]["raw"][b], mu, sd)
+            else:
+                Xtr = np.concatenate([A[n][b] for n in tr_names], 0)
+                Xte = A[held][b]
             ytr = np.concatenate([A[n]["yz"] for n in tr_names], 0)
             k = min(a.k, Xtr.shape[1])
             idx = select_k(Xtr, ytr, k)
             w = ridge_fit(Xtr[:, idx], ytr, a.lam)
-            pred = ridge_pred(w, A[held][b][:, idx])
+            pred = ridge_pred(w, Xte[:, idx])
             res[b][held] = pi_stats.spearman(pred, A[held]["y"])
         # unfitted comparator: transfer is free, it is the same number
         res["TM_to_WT"][held] = pi_stats.spearman(A[held]["tm"], A[held]["y"])
@@ -165,6 +203,8 @@ def main():
         {"protocol": {"design": "leave-one-assay-out", "k": a.k, "lam": a.lam,
                       "normalisation": "features and target z-scored within assay",
                       "n_assays": len(names)},
+         "normalisation_mode": "inductive (training-assay statistics)"
+             if a.inductive else "transductive (each assay's own statistics)",
          "predictors": summary, "gaps": gaps}, indent=2))
     print(f"\nwrote {a.out}")
 

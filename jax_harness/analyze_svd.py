@@ -350,14 +350,19 @@ def main():
     # 2. permutation null at a small, interpretable k
     # ======================================================================
     K0 = 8
-    print(f"=== permutation null at k={K0} (labels shuffled, scored against "
-          f"the shuffled labels) ===\n")
-    print("   Shuffling only the TRAINING labels and scoring against the true")
-    print("   held-out ones is NOT a null here: the fitted direction still lies")
-    print("   inside a subspace whose axes are individually predictive, so the")
-    print("   'null' inherits their association with DMS and comes out huge.")
-    print("   The whole label vector is permuted and the permuted values are")
-    print("   what the prediction is scored against.\n")
+    print(f"=== permutation null at k={K0}, position-block ===\n")
+    print("   Two things this null has to get right, both of which an earlier")
+    print("   version got wrong.")
+    print("   (1) Shuffling only the TRAINING labels and scoring against the")
+    print("       true held-out ones is not a null at all: the fitted direction")
+    print("       still lies inside a subspace whose axes are individually")
+    print("       predictive and inherits their association with DMS. The whole")
+    print("       label vector is permuted and scored against the permuted values.")
+    print("   (2) A FREE row shuffle destroys the fact that variants at one")
+    print("       residue share a DMS level, making the null easier than the")
+    print("       data. Whole positions are exchanged among positions holding")
+    print("       the same number of variants, so that structure survives and")
+    print("       only its link to dz is broken.\n")
     null = {}
     for n in names:
         X = jnp.asarray(A[n]["X"]).transpose(1, 0, 2)
@@ -378,8 +383,34 @@ def main():
                 yy[ei])                                              # lam = 10
 
         real = np.asarray(held_out_rho(y))
-        perm_y = jnp.stack([jnp.asarray(rng.permutation(np.asarray(y)))
-                            for _ in range(a.n_perm)])
+        # POSITION-BLOCK permutation. A free row shuffle destroys the fact
+        # that variants at one residue share a DMS level, so the null it builds
+        # is easier than the data and every effect looks more significant than
+        # it is. Permuting whole positions keeps that structure intact and only
+        # breaks the association with dz. Sites hold different numbers of
+        # variants, so blocks are matched by size where possible and the
+        # remainder is shuffled within its own size class.
+        pos_arr = np.asarray(pos)
+        blocks = [np.where(pos_arr == p)[0] for p in np.unique(pos_arr)]
+        by_size = {}
+        for b in blocks:
+            by_size.setdefault(len(b), []).append(b)
+        yv = np.asarray(y)
+        # A position whose variant-count is unique has nothing to swap with and
+        # stays put, which weakens the null. Report how much of the data can
+        # actually move, so a degenerate permutation is visible rather than
+        # silently conservative.
+        movable = sum(len(g) * sz for sz, g in by_size.items() if len(g) > 1)
+        frac_movable = movable / len(yv)
+        perms = []
+        for _ in range(a.n_perm):
+            yp = np.empty_like(yv)
+            for sz, grp in by_size.items():
+                order = rng.permutation(len(grp))
+                for src, dst in zip(order, range(len(grp))):
+                    yp[grp[dst]] = yv[grp[src]]
+            perms.append(yp)
+        perm_y = jnp.stack([jnp.asarray(pp) for pp in perms])
         pr = np.asarray(jax.vmap(held_out_rho)(perm_y))              # (n_perm, L)
         # Max-statistic correction: the real value is the best of 64 layers, so
         # the null it is judged against must also be the best of 64. Comparing
@@ -390,18 +421,21 @@ def main():
         null_stat = np.nanmax(np.abs(pr), axis=1)                    # (n_perm,)
         p = float((null_stat >= real_stat).mean())
         null[n] = {"best_layer": best, "rho": float(real[best]),
+                   "frac_permutable": float(frac_movable),
                    "null_max_mean": float(np.nanmean(null_stat)),
                    "null_max_p95": float(np.nanpercentile(null_stat, 95)),
                    "p_perm_maxstat": p}
         print(f"   {n:8s} layer {best:2d}  rho {real[best]:+.3f}   "
-              f"null max|rho| p95 {null[n]['null_max_p95']:.3f}   p={p:.3f}")
+              f"null max|rho| p95 {null[n]['null_max_p95']:.3f}   p={p:.3f}   "
+              f"({100*frac_movable:.0f}% of rows permutable)")
     res["permutation_null"] = {
         "k": K0, "per_assay": null,
-        "caveat": "free row permutation of the label vector; it does not "
-                  "preserve the within-position autocorrelation of DMS, so it "
-                  "is a null for 'no association' rather than for 'no "
-                  "association beyond position structure'. The position-"
-                  "grouped split is what handles the latter."}
+        "scheme": "position-block permutation: whole residue positions are "
+                  "exchanged among positions holding the same number of "
+                  "variants, so the within-position structure of DMS survives "
+                  "and only its association with dz is broken. A free row "
+                  "shuffle would build an easier null and overstate every "
+                  "effect."}
     print()
 
     # ======================================================================
