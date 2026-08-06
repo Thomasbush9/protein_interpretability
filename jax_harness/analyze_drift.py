@@ -86,13 +86,13 @@ def main():
     a = ap.parse_args()
 
     print(f"jax devices: {jax.devices()}\n")
-    B = {Path(f).stem[len("gym2_"):]: f for f in glob.glob(a.b_glob)}
+    B = {Path(f).stem.split("_", 1)[1]: f for f in glob.glob(a.b_glob)}
     rows, per = {}, {}
 
     print(f"{'assay':8s} {'KL drift':>9s} {'cos(dz)':>9s} {'sd(noise)':>10s} "
           f"{'sharp r1':>9s} {'sharp r2':>9s} {'sign agr':>9s} {'confident':>10s}")
     for fa in sorted(glob.glob(a.a_glob)):
-        stem = Path(fa).stem[len("gym2s_"):]
+        stem = Path(fa).stem.split("_", 1)[1]
         if stem not in B:
             continue
         A_, B_ = np.load(fa, allow_pickle=True), np.load(B[stem], allow_pickle=True)

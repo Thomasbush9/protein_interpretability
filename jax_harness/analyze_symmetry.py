@@ -122,6 +122,9 @@ def main():
     ap = argparse.ArgumentParser()
     R = "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/"
     ap.add_argument("--glob", default=R + "runs/gym2s_*.npz")
+    ap.add_argument("--compare-glob", default="",
+                    help="archives to check faithfulness against, by rank "
+                         "agreement on the re-emitted kl_glob")
     ap.add_argument("--assay-dir",
                     default=R + "data/gym/assays/DMS_ProteinGym_substitutions")
     ap.add_argument("--tm-cache", default=R + "runs/tm_cache.npz",
@@ -133,6 +136,10 @@ def main():
     a = ap.parse_args()
 
     print(f"jax devices: {jax.devices()}\n")
+    CMP = {}
+    if a.compare_glob:
+        for f in glob.glob(a.compare_glob):
+            CMP[Path(f).stem.split("_", 1)[1]] = f
     # Loaded rather than computed, and required rather than optional: silently
     # dropping the TM column would weaken the output baseline, and it would do
     # so in the direction that favours the conclusion this test exists to be
@@ -140,7 +147,7 @@ def main():
     TM = np.load(a.tm_cache)
     res, dims = {}, {}
     for f in sorted(glob.glob(a.glob)):
-        stem = Path(f).stem[len("gym2s_"):]
+        stem = Path(f).stem.split("_", 1)[1]
         name = stem.split("_")[0]
         d = np.load(f, allow_pickle=True)
         y, pos = np.asarray(d["score"], float), np.asarray(d["pos"])
@@ -160,6 +167,16 @@ def main():
         tm = np.asarray(TM[stem], float)
         assert len(tm) == len(y), f"{name}: TM cache length {len(tm)} != {len(y)}"
         rich = output_matrix(ca, ca_wt, tm, d["plddt"], d["plddt_site"], pos)
+        # PER-RESIDUE pLDDT, if the archive has it. This is the block the whole
+        # comparison was missing. The claim under test is that the internal
+        # response is CERTAINTY, and until now the output side was given two
+        # scalars of the model's own confidence head -- the chain mean and the
+        # value at the mutated residue. If the full vector closes the gap, the
+        # finding is not "the model does not express it" but "it expresses it
+        # in pLDDT and not in coordinates", which is a different paper.
+        dpl = None
+        if "plddt_res" in d.files:
+            dpl = np.asarray(d["plddt_res"], float) - np.asarray(d["plddt_res_wt"], float)
         # The raw geometry blocks carry no confidence information at all, while
         # `rich` includes pLDDT. Without this last block, "extra dimensions did
         # not help the output" could just mean "raw coordinates lack pLDDT".
@@ -169,13 +186,26 @@ def main():
         # removes that escape route.
         blocks = {
             "internal dz (last layer)": np.asarray(d["dz_site"])[:, -1, :],
-            "output all (max generosity)": np.column_stack([ddist, xyz, disp, rich]),
+            "output all (max generosity)": np.column_stack(
+                [ddist, xyz, disp, rich] + ([dpl] if dpl is not None else [])),
             "output pair distances": ddist,
             "output coordinates": xyz,
             "output displacement": disp,
             "output rich (published)": rich,
         }
+        if dpl is not None:
+            blocks["output pLDDT per residue"] = dpl
+            blocks["output pLDDT + rich"] = np.column_stack([dpl, rich])
         dims[name] = {k: int(v.shape[1]) for k, v in blocks.items()}
+        if stem in CMP:
+            o = np.load(CMP[stem], allow_pickle=True)
+            same = [str(m) for m in o["mutant"]] == [str(m) for m in d["mutant"]]
+            rho = pi_stats.spearman(o["kl_glob"][:, -1], d["kl_glob"][:, -1])
+            rel = float(np.abs(o["kl_glob"][:, -1] - d["kl_glob"][:, -1]).mean()
+                        / (np.abs(d["kl_glob"][:, -1]).mean() + 1e-12))
+            print(f"   {name:8s} faithfulness vs prior run: variants "
+                  f"{'match' if same else 'DIFFER'}, kl rank rho {rho:.4f}, "
+                  f"rel drift {100*rel:.2f}%", flush=True)
         for bn, X in blocks.items():
             res.setdefault(bn, {})[name] = evaluate(
                 X, y, pos, a.seeds, a.frac, KS)

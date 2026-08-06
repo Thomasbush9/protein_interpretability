@@ -103,13 +103,13 @@ def main():
 
     print(f"jax devices: {jax.devices()}\n")
     files = sorted(glob.glob(a.glob))
-    rep = {Path(f).stem[len("gym2_"):]: f for f in glob.glob(a.replicate_glob)}
+    rep = {Path(f).stem.split("_", 1)[1]: f for f in glob.glob(a.replicate_glob)}
 
     A = {}
     print("Reconstructing the archived pair sample\n")
     print(f"   {'assay':8s} {'len':>4s} {'pairs':>6s} {'archived':>9s} {'check':>6s}")
     for f in files:
-        stem = Path(f).stem[len("gym2s_"):]
+        stem = Path(f).stem.split("_", 1)[1]
         name = stem.split("_")[0]
         d = np.load(f, allow_pickle=True)
         L = len(str(d["wt_seq"]))

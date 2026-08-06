@@ -198,16 +198,27 @@ def main():
         while dzt.ndim > 4:
             dzt = dzt[:, 0]
         dz_row = np.linalg.norm(dzt, axis=-1)          # [L, N, N]
+        # The VECTOR, not its norm. A norm cannot support a subspace
+        # comparison: it discards the direction, which is the entire object of
+        # interest. `deep2_*` stored only the norm, which is why the
+        # cross-model analysis could not be done offline. Defined to match
+        # Boltz-2's dz_site exactly -- mean over partner residues of the pair
+        # row at the mutated position -- so the three models describe the same
+        # quantity even though their channel spaces are unrelated.
+        dz_vec = dzt[:, pos].mean(axis=1)              # [L, C]
         dst = sl - s_wt
         while dst.ndim > 3:
             dst = dst[:, 0]
         ds_tok = np.linalg.norm(dst, axis=-1)          # [L, N]
+        ds_vec = dst[:, pos]                           # [L, C_s]
         rec.append(dict(
             mutant=r["mutant"], pos=pos, score=float(r["DMS_score"]),
             kl_glob=kl.mean(axis=(1, 2)).astype(np.float32),
             kl_site=kl[:, pos].mean(axis=1).astype(np.float32),
             dz_site=dz_row[:, pos].mean(-1).astype(np.float32),
             ds_site=ds_tok[:, pos].astype(np.float32),
+            dz_vec=dz_vec.astype(np.float32),
+            ds_vec=ds_vec.astype(np.float32),
             plddt_mean=float(e.plddt.mean()), plddt_site=float(e.plddt[pos]),
         ))
         cas.append(e.ca)
@@ -218,6 +229,8 @@ def main():
            ("mutant", "pos", "score", "plddt_mean", "plddt_site")}
     for k in ("kl_glob", "kl_site", "dz_site", "ds_site"):
         out[k] = np.stack([r[k] for r in rec])        # [n_variants, n_layers]
+    for k in ("dz_vec", "ds_vec"):
+        out[k] = np.stack([r[k] for r in rec])        # [n_variants, n_layers, C]
     out["ca"] = np.stack(cas).astype(np.float32)      # TM on a login node
     out["ca_wt"] = e_wt.ca.astype(np.float32)
     # the fidelity evidence travels with the features it licenses
@@ -233,7 +246,8 @@ def main():
     out["n_layers"] = np.array(nL)
     np.savez_compressed(args.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
-          f"({len(rec)} variants x {nL} layers x 4 features)", flush=True)
+          f"({len(rec)} variants x {nL} layers; dz_vec "
+          f"{out['dz_vec'].shape})", flush=True)
 
 
 if __name__ == "__main__":
