@@ -1065,6 +1065,88 @@ context, weighted toward context, with a residual that neither accounts for.</p>
 </section>"""
 
 
+
+def sec_bw(BW):
+    if not BW:
+        return pending("Positions or mutations?")
+    b, g = BW["blocks"], BW["internal_minus"]
+    ref = list(b)[0]
+    rows = "".join(
+        f"<tr><td>{k}</td><td class=n>{ci(v['between'])}</td>"
+        f"<td class=n>{ci(v['within'])}</td></tr>" for k, v in b.items())
+    grows = "".join(
+        f"<tr><td>{k}</td>"
+        f"<td class=n>{v['between']['gap']:+.3f} <span class=ci>"
+        f"[{v['between']['ci_lo']:+.3f}, {v['between']['ci_hi']:+.3f}]</span> "
+        f"{v['between']['wins']}/{v['between']['n']}</td>"
+        f"<td class=n>{v['within']['gap']:+.3f} <span class=ci>"
+        f"[{v['within']['ci_lo']:+.3f}, {v['within']['ci_hi']:+.3f}]</span> "
+        f"{v['within']['wins']}/{v['within']['n']}</td></tr>"
+        for k, v in g.items())
+    chem = [k for k in g if "chemistry" in k]
+    cw = g[chem[0]]["within"] if chem else None
+    cb = g[chem[0]]["between"] if chem else None
+    return f"""
+<section id=bw>
+<h2>Does the model know about positions, or about mutations?</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">the claim survives</span>
+<h3>Internal beats the output within a site as well as across sites</h3></div>
+<p>Position-grouped splits stop a probe memorising which residues are fragile,
+but they do not stop it learning what makes a residue fragile in general. Since
+the attribution section found that removing site identity cost more than
+removing substitution identity, the obvious worry is that the whole internal
+advantage is really "this model knows which positions are sensitive" &mdash; a
+much weaker statement than "this model knows what a given mutation does".</p>
+<p>The same held-out predictions, from the same fits, split two ways: aggregated
+to position means (can it rank <em>sites</em>?) and with each position's mean
+removed from both sides (given a site, can it rank the handful of
+<em>substitutions</em> at it?). {100*BW['within_coverage']:.0f}% of held-out rows
+sit at a site holding at least two variants, so the within-position half is
+well powered.</p>
+<div class=scroll><table>
+<thead><tr><th>block</th><th>between positions</th><th>within positions</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<div class=scroll><table>
+<thead><tr><th>internal minus &hellip;</th><th>between</th><th>within</th></tr></thead>
+<tbody>{grows}</tbody></table></div>
+<p>Against the emitted output the margin is decisive on <b>both</b> axes and, if
+anything, larger within positions than across them. The advantage is therefore
+not an artifact of site sensitivity: given a residue, the internal
+representation ranks the individual substitutions at it far better than anything
+the model emits.</p>
+</div>
+<div class="card amber">
+<div class=row><span class="chip c-amber">qualification</span>
+<h3>Against chemistry, most of the edge is structural context</h3></div>
+<p>Substitution chemistry is a different comparator from the output, and against
+it the picture splits:</p>
+<ul>
+<li><b>Between positions {cb['gap']:+.3f}</b>
+<span class=ci>[{cb['ci_lo']:+.3f}, {cb['ci_hi']:+.3f}]</span>,
+{cb['wins']}/{cb['n']} &mdash; the model knows which sites are sensitive far
+better than chemistry does.</li>
+<li><b>Within positions {cw['gap']:+.3f}</b>
+<span class=ci>[{cw['ci_lo']:+.3f}, {cw['ci_hi']:+.3f}]</span>,
+{cw['wins']}/{cw['n']} &mdash; at the variant level inside a site it beats
+chemistry only modestly. The interval clears zero, but this is the tightest
+margin anywhere in this report.</li>
+</ul>
+<p>So most of the internal signal's edge over chemistry is <em>structural
+context</em>: which residue, in this fold, matters. Its edge in discriminating
+<em>which</em> substitution at a given site is real but small. That leaves the
+headline untouched &mdash; that comparison is against the model's own output,
+where internal wins on both axes &mdash; and it matches the attribution result,
+where PC2 proved more a statement about where a mutation sits than what it
+is.</p>
+<p class=ci>Within-position values are lower for every block and necessarily so:
+few variants share a site, the DMS spread inside a site is small, and
+measurement noise is a larger share of it. Blocks are comparable down a column,
+never across columns.</p>
+</div>
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -1084,12 +1166,14 @@ def main():
     ap.add_argument("--scope", default=str(W / "runs/scope_v1.json"))
     ap.add_argument("--scrutiny", default=str(W / "runs/scrutiny_v2.json"))
     ap.add_argument("--attrib", default=str(W / "runs/attrib_v1.json"))
+    ap.add_argument("--bw", default=str(W / "runs/bw_v1.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
     Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
     C, AB, X, DP = (load(a.chem), load(a.ablate), load(a.xmodel), load(a.depth))
     SC, SR, AT = load(a.scope), load(a.scrutiny), load(a.attrib)
+    BW = load(a.bw)
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -1147,6 +1231,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 {sec_chem(C)}
 {sec_scrutiny(SR, AT)}
 {sec_attrib(AT)}
+{sec_bw(BW)}
 
 <figure>
   <img src="figures/xmodel.png" alt="Principal-angle control, agreement against the
@@ -1280,7 +1365,7 @@ key.</li>
                     ("transfer", TR), ("pc2", Q), ("symmetry", Y),
                     ("steer", T), ("chem", C), ("ablate", AB),
                     ("xmodel", X), ("depth", DP), ("scope", SC),
-                    ("scrutiny", SR), ("attrib", AT)):
+                    ("scrutiny", SR), ("attrib", AT), ("bw", BW)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
