@@ -11,6 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
+
 W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
 OUT = W / "report_svd"
 
@@ -545,6 +547,191 @@ accordingly.</li>
 </section>"""
 
 
+
+def sec_methods(S, C):
+    if not S:
+        return pending("PC2 method")
+    D = S["protocol"]["dim"]
+    return f"""
+<section id=methods>
+<h2>How the basis and PC2 are defined</h2>
+<div class="card">
+<p>Every result on this page depends on one construction, so it is stated once
+here rather than implied by each figure.</p>
+<ol>
+<li><b>The quantity.</b> &Delta;z = z<sub>mut</sub> &minus; z<sub>WT</sub>, the
+{D}-channel pair representation at the mutated residue averaged over its partners,
+which <code>exp_gym2</code> archives directly as <code>dz_site</code>. Wild type
+is evaluated at the <em>same</em> residue row, so the difference is not
+contaminated by which position is being read.</li>
+<li><b>Within-assay standardisation.</b> Each protein's &Delta;z is z-scored per
+channel before pooling, so no protein dominates the decomposition through its
+own representation scale.</li>
+<li><b>One shared basis.</b> The SVD is taken on the pooled, standardised rows of
+<em>all</em> assays, not per assay. This is not a convenience: singular-vector
+signs are arbitrary, so averaging a signed correlation across independently
+computed bases cancels to nothing. An earlier version did that and reported
+&asymp;0.02 against DMS for every component when the true value was &minus;0.65.</li>
+<li><b>Orientation.</b> Each component is signed so its pooled correlation with
+<code>kl_glob</code> is non-negative &mdash; a positive score always means the
+internal state moved more. Applied before anything is interpreted.</li>
+<li><b>PC2</b> is the second component of that basis. It is not selected for
+being predictive; it is simply the second direction of variance, and the fact
+that it is the stability axis is a result rather than a choice. PC1 is
+substitution volume.</li>
+<li><b>Held out.</b> Splits are grouped by residue POSITION, so no site appears
+on both sides. Where a basis is used for prediction it is fitted on training
+positions only and frozen before held-out rows are projected; a basis learned on
+all rows would leak the test set into the coordinate system itself.</li>
+</ol>
+<p class=ci>Everything is bootstrapped over assays, never over variants: variants
+at one residue share an environment and are not independent.</p>
+</div>
+</section>"""
+
+
+def sec_chem(C):
+    if not C:
+        return pending("Chemistry control")
+    b, g = C["blocks"], C["increments"]
+    lo = C["pc2_alone_loao"]
+    rows = "".join(
+        f"<tr><td>{k}</td><td class=n>{ci(b[k])}</td></tr>" for k in
+        ("chemistry (17)", "dz residualised on chemistry (128)", "PC2 alone (1)",
+         "PC1-4 (4)", "chemistry + PC2 (18)", "full dz (128)") if k in b)
+    grows = "".join(
+        f"<tr><td>{k}</td><td class=n>{g[k]['gap']:+.3f} <span class=ci>"
+        f"[{g[k]['ci_lo']:+.3f}, {g[k]['ci_hi']:+.3f}]</span></td>"
+        f"<td class=n>{g[k]['wins']}/{g[k]['n']}</td></tr>" for k in g)
+    return f"""
+<section id=chem>
+<h2>Is it just substitution chemistry?</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">deciding control</span>
+<h3>One scalar beats seventeen chemistry descriptors</h3></div>
+<p>The audit named chemistry as the deciding baseline, and the SVD made the
+worry sharper rather than weaker: PC1 correlates with volume change at
+&minus;0.80 and even PC2 carries &minus;0.53. So the deflationary reading &mdash;
+the model has learned which amino acid was substituted, and chemistry predicts
+stability &mdash; has to be answered directly.</p>
+<div class=scroll><table>
+<thead><tr><th>feature block</th><th>held-out &rho;</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<div class=scroll><table>
+<thead><tr><th>increment</th><th>paired difference</th><th>assays won</th></tr></thead>
+<tbody>{grows}</tbody></table></div>
+<p><b>PC2 alone, transferred:</b> {ci(lo)} &mdash; one number per variant, with the
+basis <em>and its sign</em> taken from the other eleven proteins and nothing
+fitted on the held-out one.</p>
+<p class=ci>Honest caveat: &Delta;z residualised on chemistry scores +0.455 against
+chemistry's +0.401 and that gap includes zero. Residual-alone is not better than
+chemistry; what is solid is the increment, which can only come from the
+chemistry-orthogonal part.</p>
+</div>
+</section>"""
+
+
+def sec_ablate(T):
+    if not T:
+        return pending("Projection ablation")
+    d = T["directions"]
+    rows = "".join(
+        f"<tr><td>{k}</td><td class=n>{ci(v['recovery'])}</td>"
+        f"<td class=n>{v['d_plddt']['mean']:+.5f}</td>"
+        f"<td class=n>{v['ca']['mean']:.4f}</td></tr>" for k, v in d.items())
+    worst = max(T["positive_control_residual_fraction"].values())
+    return f"""
+<section id=ablate>
+<h2>Deleting PC2 from a real mutation</h2>
+<div class="card amber">
+<div class=row><span class="chip c-amber">negative result</span>
+<h3>Removing the direction the probe reads changes nothing the model emits</h3></div>
+<p>Rather than adding a synthetic vector, this takes the difference the model
+itself produced for a real variant, removes one direction from it, puts it back
+and re-runs the structure module. <b>Positive control:</b> at most
+{100*worst:.5f}% of the component survives the removal, so the surgery
+demonstrably worked &mdash; without that number a null would be uninterpretable.</p>
+<div class=scroll><table>
+<thead><tr><th>direction removed</th><th>distogram recovery</th>
+<th>&Delta; pLDDT</th><th>CA shift (&Aring;)</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>Recovery is the fraction of the mutation's own width change that the deletion
+undoes; 1.0 would mean full reversion to wild type. It is indistinguishable from
+zero for PC2, and paired against every random direction the difference includes
+zero. CA shifts sit far below the 0.30&nbsp;&Aring; sampler-drift floor.</p>
+<p>Since ablating PC2 destroys the probe's entire signal by construction while
+the output does not move, the decodable direction is <b>not functionally
+load-bearing</b> for the model's own prediction. Bounded: 4 assays, 16 variants
+each, and removing 1 of {128} dimensions is a small change in absolute terms
+&mdash; which is exactly what the random controls calibrate.</p>
+</div>
+</section>"""
+
+
+def sec_xmodel(X, DP):
+    if not X:
+        return pending("Cross-model comparison")
+    cm = X["complementarity"]
+    nc = X["principal_angles_negative_control"]
+    rows = "".join(
+        f"<tr><td>{k.replace('|', ' vs ')}</td><td class=n>{v['mean']:.3f}</td>"
+        f"<td class=n>{X['rsa'][k]['mean']:.3f}</td></tr>"
+        for k, v in X["cka"].items())
+    g = cm["averaged minus best single"]
+    dep = ""
+    if DP:
+        ck = DP["cka_by_depth"]
+        mid = {k: np.mean([r["mean"] for r in v if r["frac"] < 0.9])
+               for k, v in ck.items()}
+        last = {k: v[-1]["mean"] for k, v in ck.items()}
+        dep = f"""
+<div class="card warn">
+<div class=row><span class="chip c-warn">correction</span>
+<h3>The asymmetry above is a last-layer artifact</h3></div>
+<p>Those CKA values compare each model's FINAL layer, and the trunks are
+{DP['n_layers']['boltz2']}, {DP['n_layers']['of3']} and
+{DP['n_layers']['protenix']} blocks deep &mdash; "the last of 64" and "the last
+of 16" are not the same amount of computation. At matched <em>fractional</em>
+depth the three agree far more closely and far more uniformly:</p>
+<div class=scroll><table>
+<thead><tr><th>pair</th><th>mean CKA, l/L &lt; 0.9</th><th>at the last layer</th></tr></thead>
+<tbody>{''.join(f"<tr><td>{k.replace('|', ' vs ')}</td><td class=n>{mid[k]:.3f}</td>"
+                f"<td class=n>{last[k]:.3f}</td></tr>" for k in ck)}</tbody></table></div>
+<p>Every pair falls off sharply only at l/L = 1, which is where each model
+specialises for its own heads. An earlier version of this report attributed the
+gap to architectural lineage; that explanation was wrong twice over &mdash; all
+three use the same AF3-derived trunk, and the gap is not a property of the
+models at all.</p>
+</div>"""
+    return f"""
+<section id=xmodel>
+<h2>Three models, one mutation signal</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">generality</span>
+<h3>All three decode it; none knows anything the others do not</h3></div>
+<p>Boltz-2, OpenFold3 and Protenix all use a {X.get('dim', 128)}-dimensional pair
+representation, but they are trained independently, so their channel bases are
+unrelated &mdash; confirmed as a negative control: principal angles sit at
+{min(np.mean(list(v.values())) for v in nc['pairs'].values()):.3f}&ndash;
+{max(np.mean(list(v.values())) for v in nc['pairs'].values()):.3f} against a
+chance level of {nc['chance']:.3f}. Every real comparison therefore goes through
+the variant axis.</p>
+<div class=scroll><table>
+<thead><tr><th>pair</th><th>CKA</th><th>RSA &rho;</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>Probes: Boltz-2 {ci(cm['boltz2'])}, OpenFold3 {ci(cm['of3'])}, Protenix
+{ci(cm['protenix'])}. Combining them buys
+<b>{g['gap']:+.3f}</b> <span class=ci>[{g['ci_lo']:+.3f}, {g['ci_hi']:+.3f}]</span>
+&mdash; the interval includes zero, so the phenotype information is
+<b>redundant</b> across models.</p>
+<p>The finding is therefore a property of the model class rather than of any one
+implementation. Bounded by <b>4 assays</b>; a null on complementarity at that
+size is weak evidence and should not be over-read.</p>
+</div>
+{dep}
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -557,10 +744,15 @@ def main():
     ap.add_argument("--pc2", default=str(W / "runs/pc2_v2.json"))
     ap.add_argument("--symmetry", default=str(W / "runs/symmetry_v2.json"))
     ap.add_argument("--steer", default=str(W / "runs/steer_RCRO_v4.json"))
+    ap.add_argument("--chem", default=str(W / "runs/chem_v1.json"))
+    ap.add_argument("--ablate", default=str(W / "runs/ablate_v1.json"))
+    ap.add_argument("--xmodel", default=str(W / "runs/xmodel_v1.json"))
+    ap.add_argument("--depth", default=str(W / "runs/depth_v1.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
     Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
+    C, AB, X, DP = (load(a.chem), load(a.ablate), load(a.xmodel), load(a.depth))
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -601,10 +793,33 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 </figure>
 
 {sec_symmetry(Y)}
+{sec_methods(S, C)}
 {sec_dims(S, DS)}
 {sec_shared(S)}
 {sec_what(S)}
 {sec_transfer(S, TR)}
+
+<figure>
+  <img src="figures/chem.png" alt="Feature blocks, paired increments, and PC2 alone
+  transferred per assay.">
+  <figcaption>The chemistry control. <code>fig_chem.py</code> from <code>chem_v1.json</code>.</figcaption>
+</figure>
+
+{sec_chem(C)}
+
+<figure>
+  <img src="figures/xmodel.png" alt="Principal-angle control, agreement against the
+  self-repeat ceiling, and complementarity.">
+  <figcaption>Three models on identical variants. <code>fig_xmodel.py</code>.</figcaption>
+</figure>
+<figure>
+  <img src="figures/depth.png" alt="Decodability, cross-model agreement and the severity
+  direction against fractional depth.">
+  <figcaption>Depth-resolved, which corrects the last-layer comparison above.
+  <code>fig_depth.py</code>.</figcaption>
+</figure>
+
+{sec_xmodel(X, DP)}
 
 <figure>
   <img src="figures/pc2.png" alt="Three panels: normalised width change against distance
@@ -636,6 +851,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 </figure>
 
 {sec_steer(T)}
+{sec_ablate(AB)}
 
 <section id=limits>
 <h2>What this does not establish</h2>
@@ -721,7 +937,8 @@ key.</li>
     print(f"wrote {OUT/'index.html'}  ({len(html)/1024:.0f} KB)")
     for nm, obj in (("svd dz", S), ("svd ds", DS), ("drift", Dj),
                     ("transfer", TR), ("pc2", Q), ("symmetry", Y),
-                    ("steer", T)):
+                    ("steer", T), ("chem", C), ("ablate", AB),
+                    ("xmodel", X), ("depth", DP)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
