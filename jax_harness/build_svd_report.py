@@ -114,15 +114,14 @@ the stability component enters.</p>
 <p>Observed held-out &rho; at k = {nl['k']} ranges {lo_r:+.3f} to {hi_r:+.3f} across
 assays; the null 95th percentile of max|&rho;| ranges {worst:.3f} to {best:.3f}.
 Every assay returns p = 0.000.</p>
-<p>Two things had to be right for that to mean anything. The statistic is the
+<p>Two corrections stand behind those numbers. The statistic is the
 <em>maximum over layers</em> on both sides, so searching 64 layers is charged to
-the null rather than treated as free. And the permutation shuffles the whole
-label vector and scores against the shuffled labels &mdash; an earlier version
-shuffled only the training labels and scored against the true held-out ones,
-which is not a null at all: the fitted direction still lies inside a subspace
-whose axes are individually predictive, and it inherits their association with
-DMS. That mistake produced a &ldquo;null&rdquo; reaching |&rho;| &asymp; 0.70.
-{nl['caveat']}</p>
+the null rather than treated as free. And an earlier version shuffled only the
+training labels while scoring against the true held-out ones, which is not a
+null at all &mdash; the fitted direction still lies inside a subspace whose axes
+are individually predictive and inherits their association with DMS. That
+mistake produced a &ldquo;null&rdquo; reaching |&rho;| &asymp; 0.70.
+{nl.get('scheme', nl.get('caveat', ''))}</p>
 </div>
 </section>"""
 
@@ -207,8 +206,36 @@ representation scale.</p>
 <div class=scroll><table>
 <thead><tr><th>quantity</th>{"".join(f"<th>PC{i+1}</th>" for i in range(6))}</tr></thead>
 <tbody>{body}</tbody></table></div>
-<p class=ci>Bold = assay-level 95% interval excludes zero. Correlations at the
-final layer.</p>
+<p class=ci>Spearman correlation between each variant's component score and the
+quantity named on the left, computed per assay and then pooled. Bold = the
+assay-level 95% interval excludes zero. Final layer.</p>
+
+<h3 style="margin-top:1.3rem">What the rows are</h3>
+<ul>
+<li><b>DMS</b> &mdash; the experimental measurement, from ProteinGym. For these
+assays it is a folding-stability score: <em>higher means the variant is better
+tolerated</em>. So a negative correlation means a high component score marks a
+destabilising mutation.</li>
+<li><b>Signed width change</b> (<code>d sigma</code>) &mdash; the model's
+predicted distance distribution for a residue pair has a standard deviation
+&sigma;, in &aring;ngstr&ouml;ms. This is &sigma;(mutant) &minus; &sigma;(wild
+type), averaged over sampled pairs. <em>Positive means the model became less
+certain</em> about where residues sit; negative means it sharpened.</li>
+<li><b>Broadening</b> and <b>relocation</b> &mdash; the two halves of the
+symmetric KL between the mutant and wild-type distograms, split exactly under a
+Gaussian approximation. Relocation is the part explained by the distribution
+<em>moving</em> to a new distance; broadening is the part explained by it
+<em>widening</em> at the same distance. A raw divergence cannot tell those
+apart, which is why the split exists.</li>
+<li><b>Symmetric KL</b> &mdash; the Jeffreys divergence between the mutant and
+wild-type distograms, averaged over sampled residue pairs. This is the scalar
+the original probe used.</li>
+<li><b>&Delta; volume</b> and <b>&Delta; hydropathy</b> &mdash; two of the
+substitution-chemistry descriptors defined below: the change in residue side-chain
+volume (&aring;ngstr&ouml;m<sup>3</sup>) and in Kyte&ndash;Doolittle hydropathy
+between the wild-type and mutant amino acid. These depend only on <em>which
+letter replaced which</em> and involve the model not at all.</li>
+</ul>
 <p><b>The mechanism report's conclusion reappears here from an independent
 direction.</b> PC{pc2+1} carries {dms[pc2]['mean']:+.3f} with measured stability and,
 simultaneously, {pool['spread_glob'][pc2]['mean']:+.3f} with broadening and
@@ -410,6 +437,11 @@ def sec_symmetry(Y):
                       f"<td class=n>{g['wins']}/{g['n']}</td></tr>")
     out_lo = min(best(b) for b in CV if b != INT)
     out_hi = max(best(b) for b in CV if b != INT)
+    mx = max(dim(b) for b in CV if b != INT)
+    pl = [b for b in CV if "pLDDT" in b]
+    rich_best = best("output rich (published)") if "output rich (published)" in CV else 0.0
+    plddt_best = max((best(b) for b in pl), default=0.0)
+    plddt_gain = plddt_best - rich_best
     return f"""
 <section id=symmetry>
 <h2>Internal versus output, with the dimensional asymmetry removed</h2>
@@ -433,8 +465,9 @@ window where the probe is known to be strongest.</p>
 <div class=scroll><table>
 <thead><tr><th>block</th><th>dimensions</th><th>best held-out &rho;</th></tr></thead>
 <tbody>{rows}</tbody></table></div>
-<p>The output side was described at five sizes spanning ten to {dim(order[1]) if len(order)>1 else 0}
-dimensions, including one block that is every emitted quantity at once &mdash;
+<p>The output side was described at {len(order)-1} sizes spanning
+{min(dim(b) for b in order[1:])} to {max(dim(b) for b in order[1:])} dimensions,
+including one block that is every emitted quantity at once &mdash;
 full-dimensional geometry plus the hand-built summaries plus confidence. Its
 ceiling is {out_lo:+.3f} to {out_hi:+.3f} across all of them.</p>
 <div class=scroll><table>
@@ -445,19 +478,24 @@ ceiling is {out_lo:+.3f} to {out_hi:+.3f} across all of them.</p>
 <div class="card">
 <div class=row><span class="chip c-run">control</span>
 <h3>An estimator problem or an information problem?</h3></div>
-<p>&ldquo;Output does badly at 1741 dimensions&rdquo; could simply be the curse of
+<p>&ldquo;Output does badly at {mx} dimensions&rdquo; could simply be the curse of
 dimensionality with 250 rows. It is not, and the shape of the result is what
-rules it out: the output ceiling is flat from ten dimensions to 1741, and the
+rules it out: the output ceiling is flat from ten dimensions to {mx}, and the
 <em>best</em> output description is one of the smallest. Adding raw geometry
 actively hurts &mdash; the emitted coordinates are largely uninformative about
 stability, so extra dimensions dilute the few useful ones rather than adding to
 them. Internal, at 128 dimensions and one layer, sits far above the entire
 band.</p>
-<p class=ci>Remaining asymmetry, stated rather than buried: per-residue pLDDT was
-never archived, only the chain mean and the value at the mutated residue. The
-output side therefore gets full dimensionality in geometry but not in
-confidence. That is the one thing a re-capture could still change, and it is the
-first thing to do if anyone presses on this result.</p>
+<p><b>The confidence channel was the one real gap, and it is now closed.</b> An
+earlier version of this comparison gave the output side just two scalars of
+pLDDT &mdash; the chain mean and the value at the mutated residue &mdash; while
+claiming the internal response is about certainty. The <code>gym3</code>
+re-capture added the full per-residue vector, and it is worth
+{plddt_gain:+.3f} to the output side: {plddt_best:+.3f} against the published
+block's {rich_best:+.3f}. Per-residue pLDDT is now the <em>best</em> single
+output description, above every geometric one. That sharpens the claim rather
+than weakening it &mdash; severity is registered as uncertainty, partially
+surfaces in the confidence head, and does not reach the coordinates.</p>
 </div>
 </section>"""
 
@@ -552,40 +590,80 @@ def sec_methods(S, C):
     if not S:
         return pending("PC2 method")
     D = S["protocol"]["dim"]
+    L = S["protocol"]["n_layers"]
     return f"""
 <section id=methods>
-<h2>How the basis and PC2 are defined</h2>
+<h2>How PC2 is obtained</h2>
 <div class="card">
-<p>Every result on this page depends on one construction, so it is stated once
-here rather than implied by each figure.</p>
+<p>This is not an SVD of the model's activations. It is an SVD of the
+<em>change</em> in one specific tensor, pooled across proteins under a fixed
+protocol, and each of those qualifications is doing work. The full construction,
+in order:</p>
 <ol>
-<li><b>The quantity.</b> &Delta;z = z<sub>mut</sub> &minus; z<sub>WT</sub>, the
-{D}-channel pair representation at the mutated residue averaged over its partners,
-which <code>exp_gym2</code> archives directly as <code>dz_site</code>. Wild type
-is evaluated at the <em>same</em> residue row, so the difference is not
-contaminated by which position is being read.</li>
-<li><b>Within-assay standardisation.</b> Each protein's &Delta;z is z-scored per
-channel before pooling, so no protein dominates the decomposition through its
-own representation scale.</li>
-<li><b>One shared basis.</b> The SVD is taken on the pooled, standardised rows of
-<em>all</em> assays, not per assay. This is not a convenience: singular-vector
-signs are arbitrary, so averaging a signed correlation across independently
-computed bases cancels to nothing. An earlier version did that and reported
-&asymp;0.02 against DMS for every component when the true value was &minus;0.65.</li>
-<li><b>Orientation.</b> Each component is signed so its pooled correlation with
-<code>kl_glob</code> is non-negative &mdash; a positive score always means the
-internal state moved more. Applied before anything is interpreted.</li>
-<li><b>PC2</b> is the second component of that basis. It is not selected for
-being predictive; it is simply the second direction of variance, and the fact
-that it is the stability axis is a result rather than a choice. PC1 is
-substitution volume.</li>
-<li><b>Held out.</b> Splits are grouped by residue POSITION, so no site appears
-on both sides. Where a basis is used for prediction it is fitted on training
-positions only and frozen before held-out rows are projected; a basis learned on
-all rows would leak the test set into the coordinate system itself.</li>
+<li><b>Two forward passes per variant.</b> The Boltz-2 trunk is run on the wild
+type and on the mutant with the <em>same</em> alignment &mdash; the mutant
+sequence is grafted onto the wild type's homologs rather than searched
+separately, so alignment composition cannot move with the mutation &mdash; and
+with the same random keys and recycle count. The only difference between the two
+passes is the one substituted residue.</li>
+
+<li><b>One tensor, one position.</b> The Pairformer's pair representation is
+<code>z[i, j, c]</code>: for every ordered pair of residues, {D} channels. At the
+mutated residue <em>r</em> we take its whole row and average over partner
+residues, <code>z_site = mean over j of z[r, j, :]</code>, giving a single
+{D}-vector. Both passes are read at the <em>same</em> row <em>r</em>, so the
+difference reflects the substitution and not which position is being looked at.
+The single-sequence track <code>s</code> is captured too and is consistently
+weaker; the signal lives between residue pairs.</li>
+
+<li><b>The quantity decomposed is a difference.</b>
+&Delta;z = z_site(mutant) &minus; z_site(wild type), one {D}-vector per variant,
+taken at the final Pairformer layer (layer {L - 1} of {L}). Decomposing raw
+activations instead would return the identity of the protein and the residue,
+which is most of their variance and none of the question.</li>
+
+<li><b>Standardise within each protein.</b> Each of the {D} channels is z-scored
+across that assay's variants, separately per assay. Without this a protein whose
+representation happens to run at a larger scale would dominate the
+decomposition simply for being louder.</li>
+
+<li><b>One basis for all twelve proteins.</b> The standardised rows of every
+assay are stacked into a single matrix (about 3,000 variants &times; {D}
+channels), the column means removed, and an SVD taken. The right singular
+vectors are the basis. This is emphatically <em>not</em> a per-assay
+decomposition: singular-vector signs are arbitrary, so twelve independent bases
+cannot be averaged or compared component-by-component. An earlier version of
+this analysis did exactly that and reported &asymp;0.02 against DMS for every
+component when the true value was &minus;0.65 &mdash; the effect had cancelled,
+not vanished.</li>
+
+<li><b>Fix the sign.</b> Each component is multiplied by &plusmn;1 so that its
+pooled correlation with the symmetric KL is non-negative, i.e. a positive score
+always means "the internal state moved further". Applied once, before any
+interpretation.</li>
+
+<li><b>PC2 is simply the second right singular vector.</b> It is not chosen for
+being predictive and not searched for. It is the second-largest direction of
+variance in how mutations move the pair representation, and the finding is that
+this direction is the stability axis. The first is substitution volume.</li>
+
+<li><b>A variant's PC2 score</b> is one number: the projection of its
+standardised, mean-centred &Delta;z onto that vector.</li>
 </ol>
-<p class=ci>Everything is bootstrapped over assays, never over variants: variants
-at one residue share an environment and are not independent.</p>
+
+<h3 style="margin-top:1.3rem">Two versions of the basis, used for different things</h3>
+<p>Where the basis is used to <b>predict</b> &mdash; the k-curves, the
+leave-one-assay-out transfer &mdash; it is refitted on <b>training positions
+only</b> and frozen before held-out rows are projected into it. A basis fitted
+on all rows would leak the test set into the coordinate system itself, which is
+the easiest way to produce a flattering and meaningless curve. Where it is used
+only to <b>describe</b> &mdash; the component-annotation table below, where
+nothing is predicted &mdash; it is fitted on all rows, because there is no
+held-out set to protect.</p>
+<p class=ci>Splits group by residue POSITION, so no site appears on both sides of
+a split. All intervals are bootstrapped over assays, never over variants:
+variants at one residue share an environment and are not independent
+observations.</p>
 </div>
 </section>"""
 
@@ -609,11 +687,23 @@ def sec_chem(C):
 <div class="card ok">
 <div class=row><span class="chip c-ok">deciding control</span>
 <h3>One scalar beats seventeen chemistry descriptors</h3></div>
-<p>The audit named chemistry as the deciding baseline, and the SVD made the
-worry sharper rather than weaker: PC1 correlates with volume change at
-&minus;0.80 and even PC2 carries &minus;0.53. So the deflationary reading &mdash;
-the model has learned which amino acid was substituted, and chemistry predicts
-stability &mdash; has to be answered directly.</p>
+<p><b>What "chemistry" means here.</b> Seventeen numbers computed from the
+substitution alone &mdash; the two amino-acid letters and nothing else. No model,
+no structure, no alignment. They are: the BLOSUM62 substitution score; the change
+in Kyte&ndash;Doolittle hydropathy, in Zamyatnin side-chain volume
+(&aring;ngstr&ouml;m<sup>3</sup>) and in charge at pH&nbsp;7, each in both signed
+and absolute form; the wild-type and mutant values of hydropathy and volume on
+their own; and six indicators for the substitutions that carry outsized
+structural consequences &mdash; to or from proline, glycine and cysteine.</p>
+<p>This matters because most of the variance in a deep mutational scan is
+explained by <em>what</em> was substituted rather than <em>where</em>. Proline in
+a helix, charge buried in a core, a large residue into a small pocket: none of
+that needs a folding model. So "the Pairformer's internal state predicts
+stability" is a claim about the model only once it beats these.</p>
+<p>The audit named this the deciding baseline, and the SVD made the worry sharper
+rather than weaker: PC1 correlates with volume change at &minus;0.80 and even PC2
+carries &minus;0.53. The deflationary reading &mdash; the model has simply learned
+which amino acid was substituted &mdash; has to be answered directly.</p>
 <div class=scroll><table>
 <thead><tr><th>feature block</th><th>held-out &rho;</th></tr></thead>
 <tbody>{rows}</tbody></table></div>
@@ -781,7 +871,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
   component-by-quantity association heatmap on a shared basis; cross-assay subspace
   agreement by layer.">
   <figcaption>Phase A on <code>dz_site</code>, twelve ProteinGym assays. Generated by
-  <code>fig_svd.py</code> from <code>svd_dz_v2.json</code>.</figcaption>
+  <code>fig_svd.py</code> from the SVD run.</figcaption>
 </figure>
 
 <figure>
@@ -789,7 +879,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
   kept for internal and five output blocks; paired per-assay differences at k=32; best
   score against the number of dimensions given to each block.">
   <figcaption>The internal/output comparison with matched treatment on both sides.
-  Generated by <code>fig_symmetry.py</code> from <code>symmetry_v2.json</code>.</figcaption>
+  Generated by <code>fig_symmetry.py</code> from the symmetry run.</figcaption>
 </figure>
 
 {sec_symmetry(Y)}
