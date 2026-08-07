@@ -896,6 +896,175 @@ needs a capture that keeps one global &Delta;z summary alongside the row.</p>
 </section>"""
 
 
+
+def sec_scrutiny(SR, AT):
+    if not SR:
+        return pending("Scrutiny of the PC2 claim")
+    rk = SR["ranking"]
+    wa = SR["wt_anchor"]
+    prof = SR["pc2_profile"]
+    par = SR["pc2_vs_dms_partial_on_chemistry"]
+    strong = sorted(((v["mean"], k) for k, v in prof.items()
+                     if abs(v["mean"]) >= 0.15), key=lambda t: -abs(t[0]))
+    rows = "".join(
+        f"<tr><td>{k.replace('chem: ', 'chemistry: ')}</td>"
+        f"<td class=n>{v:+.3f}</td></tr>" for v, k in strong)
+    alt = ""
+    if AT:
+        r = AT["pc2_vs_dms_residualised"]
+        alt = (f"{r['minus chemistry']['mean']:+.3f}",
+               100 * abs(r['minus chemistry']['mean'] / r['raw']['mean']))
+    return f"""
+<section id=scrutiny>
+<h2>Three challenges to the PC2 claim</h2>
+
+<div class="card ok">
+<div class=row><span class="chip c-ok">generalisation</span>
+<h3>One ranking across twelve proteins works as well as twelve within them</h3></div>
+<p>Every correlation elsewhere on this page is computed <em>inside</em> an assay
+and averaged over assays. That is the ProteinGym convention and it is what the
+report quotes, but it never asks whether one PC2 score means the same thing in
+two different proteins. Pooling all {rk['n_variants']:,} variants into a single
+ranking:</p>
+<div class=scroll><table>
+<thead><tr><th>ranking</th><th>&rho; vs DMS</th></tr></thead>
+<tbody>
+<tr><td>mean within assay <b>(the reported statistic)</b></td>
+<td class=n>{ci(rk['within_assay_mean'])}</td></tr>
+<tr><td>one pooled ranking, target z-scored per assay</td>
+<td class=n>{rk['pooled_target_zscored']:+.3f}</td></tr>
+<tr><td>one pooled ranking, raw targets</td>
+<td class=n>{rk['pooled_raw_target']:+.3f}</td></tr>
+</tbody></table></div>
+<p>The score is calibrated <em>across</em> proteins, not merely monotone within
+each. The within-assay average remains the headline because it is the field's
+convention; the pooled number is supporting evidence. Raw targets score lower
+because DMS units differ between assays &mdash; assay mean DMS alone correlates
+{rk['assay_offset_confound']:+.3f} with raw pooled targets, which is the offset
+the per-assay z-scoring removes without touching any within-assay ordering.</p>
+</div>
+
+<div class="card warn">
+<div class=row><span class="chip c-warn">naming</span>
+<h3>It is a subspace of the model's coordinates, not a part of the model</h3></div>
+<p>&Delta;z = z<sub>mut</sub> &minus; z<sub>WT</sub> is something <em>we</em>
+compute; the model never forms it. The directions are a genuine linear subspace
+<em>of</em> the pair-channel space, but they are an observer's construct on those
+coordinates rather than a module the network allocates or consults &mdash; and
+the causal sections below agree, since injecting or ablating PC2 does no more
+than a random direction of equal norm. Read &ldquo;mutation subspace&rdquo;
+throughout as shorthand for <b>the subspace along which mutations displace the
+pair representation</b>.</p>
+<p>One part of the worry is testable: whether the direction is an artifact of
+anchoring on wild type. Because z<sub>a</sub> &minus; z<sub>b</sub> =
+&Delta;z<sub>a</sub> &minus; &Delta;z<sub>b</sub>, mean-centring the &Delta;z set
+gives exactly the variant-to-variant difference space, with the wild-type term
+cancelled. Comparing that against a scale-only standardisation that keeps the
+anchor: subspace agreement cos<sup>2</sup> = <b>{wa['subspace_cos2']:.3f}</b>
+(chance {wa['chance']:.3f}), PC2 scores correlating
+{wa['score_rho']:+.3f}. The anchor is not what creates the direction.</p>
+<p class=ci>A first version of this test was vacuous: standardising within assay
+already subtracts the mean, so both branches decomposed the same centred matrix
+and it returned a perfect cos<sup>2</sup> = 1.000 while testing nothing. The
+figure above uses scale-only standardisation so the anchor actually survives
+into the decomposition.</p>
+</div>
+
+<div class="card amber">
+<div class=row><span class="chip c-amber">entanglement</span>
+<h3>PC2 is a mixture, and how much survives depends on how you ask</h3></div>
+<p>PC2 is not a clean stability axis. Everything it correlates with above
+|&rho;| = 0.15:</p>
+<div class=scroll><table>
+<thead><tr><th>quantity</th><th>&rho; with PC2</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>Its association with DMS holding all seventeen chemistry descriptors fixed
+depends on the construction, and the two disagree enough to matter:</p>
+<ul>
+<li><b>Partial Spearman</b> (residualising the <em>ranks</em>, this project's
+standard tool): {par['partial']:+.3f} against a raw {par['raw']:+.3f} &mdash;
+{100*abs(par['partial']/par['raw']):.0f}% surviving.</li>
+{f"<li><b>Residualising the raw scores</b>: {alt[0]} &mdash; {alt[1]:.0f}% surviving.</li>" if alt else ""}
+</ul>
+<p>The relationship is not rank-linear, so the two constructions give different
+answers, and the first is the more flattering of them. An earlier version of this
+report quoted only the {100*abs(par['partial']/par['raw']):.0f}% figure. The
+honest statement is that between roughly 70% and 98% of the association survives
+depending on the method, and the next section pushes the question harder with a
+non-parametric control.</p>
+</div>
+</section>"""
+
+
+def sec_attrib(AT):
+    if not AT:
+        return pending("What the mutant contributes")
+    r = AT["pc2_vs_dms_residualised"]
+    ex = AT["explains_pc2"]
+    pr = AT["profile"]
+    def top(side, n=5, rev=False):
+        it = sorted(pr[side].items(), key=lambda kv: kv[1]["mean"], reverse=not rev)
+        return ", ".join(f"<b>{c}</b> {v['mean']:+.2f}" for c, v in it[:n])
+    rows = "".join(
+        f"<tr><td>{k}</td><td class=n>{ci(v)}</td>"
+        f"<td class=n>{100*abs(v['mean']/r['raw']['mean']):.0f}%</td></tr>"
+        for k, v in r.items())
+    erows = "".join(f"<tr><td>{k}</td><td class=n>{ci(v)}</td></tr>"
+                    for k, v in ex.items() if np.isfinite(v["mean"]))
+    return f"""
+<section id=attrib>
+<h2>What about the mutant drives its PC2 score?</h2>
+<div class="card">
+<p>PC2 is a projection of a difference, so its value could be set by which
+residue was <em>removed</em>, which was <em>introduced</em>, or the structural
+context of the site. Amino-acid identity &mdash; twenty indicators per side
+&mdash; is the non-parametric version of the chemistry control: it can express
+any function of the substitution at all, including everything the seventeen
+descriptors capture and everything they miss.</p>
+<h3 style="margin-top:1.2rem">The residue profiles are not mirror images</h3>
+<p><b>Introduced</b> &mdash; highest {top('introduced')}; lowest
+{top('introduced', rev=True)}.<br>
+<b>Removed</b> &mdash; highest {top('removed')}; lowest
+{top('removed', rev=True)}.</p>
+<p>PC2 runs high when a large hydrophobic is replaced by something small or
+polar, which is the core-disrupting direction. The asymmetry is informative: the
+<em>removed</em> residue carries more weight than the introduced one, both in the
+profile and in how much of PC2 each explains.</p>
+<div class=scroll><table>
+<thead><tr><th>block predicting PC2 (position-grouped CV)</th>
+<th>&rho;</th></tr></thead>
+<tbody>{erows}</tbody></table></div>
+</div>
+<div class="card amber">
+<div class=row><span class="chip c-amber">the qualification</span>
+<h3>Part of PC2 really is a substitution lookup &mdash; but not most of it</h3></div>
+<div class=scroll><table>
+<thead><tr><th>PC2 vs DMS, after removing</th><th>&rho;</th>
+<th>share of raw</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p>Amino-acid identity removes about
+{100 - 100*abs(r['minus both identities']['mean']/r['raw']['mean']):.0f}% of the
+association &mdash; more than the hand-built descriptors do, which is expected
+from forty free parameters against seventeen. So a real part of PC2 <em>is</em>
+a substitution lookup. But
+{100*abs(r['minus both identities']['mean']/r['raw']['mean']):.0f}% survives, and
+that residual still tracks DMS at
+{r['minus both identities']['mean']:+.3f}.</p>
+<p><b>Site identity removes more than substitution identity does</b>
+({100*abs(r['minus site identity']['mean']/r['raw']['mean']):.0f}% surviving
+versus
+{100*abs(r['minus both identities']['mean']/r['raw']['mean']):.0f}%). PC2 is
+more a statement about <em>where</em> a mutation sits than about <em>what</em> it
+is, which matches the earlier finding that position sensitivity was its
+strongest single correlate. Removing both still leaves
+{100*abs(r['minus both identities AND site']['mean']/r['raw']['mean']):.0f}%.</p>
+<p class=ci>The defensible claim is therefore narrower than &ldquo;PC2 is the
+stability axis&rdquo;: it is a mixture of substitution identity and structural
+context, weighted toward context, with a residual that neither accounts for.</p>
+</div>
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -913,12 +1082,14 @@ def main():
     ap.add_argument("--xmodel", default=str(W / "runs/xmodel_v1.json"))
     ap.add_argument("--depth", default=str(W / "runs/depth_v1.json"))
     ap.add_argument("--scope", default=str(W / "runs/scope_v1.json"))
+    ap.add_argument("--scrutiny", default=str(W / "runs/scrutiny_v2.json"))
+    ap.add_argument("--attrib", default=str(W / "runs/attrib_v1.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
     Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
     C, AB, X, DP = (load(a.chem), load(a.ablate), load(a.xmodel), load(a.depth))
-    SC = load(a.scope)
+    SC, SR, AT = load(a.scope), load(a.scrutiny), load(a.attrib)
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -936,8 +1107,9 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
   <p class=lede>The transfer result already showed that a probe trained on eleven
   proteins predicts stability on a twelfth. This asks <em>what</em> transfers. Decomposing
   the mutation-induced difference in the pair representation gives a small, shared set
-  of directions whose second member is simultaneously the stability axis and the
-  predictive-certainty axis &mdash; which is the mechanism report's conclusion,
+  of directions &mdash; a subspace of the model's coordinates along which mutations
+  displace the representation, not a module the model itself allocates &mdash;
+  whose second member tracks both measured stability and predictive certainty &mdash; which is the mechanism report's conclusion,
   recovered without computing a divergence.</p>
 </header>
 
@@ -973,6 +1145,8 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 </figure>
 
 {sec_chem(C)}
+{sec_scrutiny(SR, AT)}
+{sec_attrib(AT)}
 
 <figure>
   <img src="figures/xmodel.png" alt="Principal-angle control, agreement against the
@@ -1105,7 +1279,8 @@ key.</li>
     for nm, obj in (("svd dz", S), ("svd ds", DS), ("drift", Dj),
                     ("transfer", TR), ("pc2", Q), ("symmetry", Y),
                     ("steer", T), ("chem", C), ("ablate", AB),
-                    ("xmodel", X), ("depth", DP), ("scope", SC)):
+                    ("xmodel", X), ("depth", DP), ("scope", SC),
+                    ("scrutiny", SR), ("attrib", AT)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
