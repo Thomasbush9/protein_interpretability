@@ -822,6 +822,80 @@ size is weak evidence and should not be over-read.</p>
 </section>"""
 
 
+
+def sec_scope(SC):
+    if not SC:
+        return pending("Is one averaged pair row too narrow a view?")
+    b, g = SC["blocks"], SC["vs_averaged_row"]
+    ref = "row, averaged over partners (dz_site)"
+    dims = SC["dims"]
+    def dim(k):
+        import statistics
+        return int(statistics.mean(dims[n][k] for n in dims))
+    order = [ref] + sorted((k for k in b if k != ref),
+                           key=lambda k: -b[k]["mean"])
+    rows = "".join(
+        f"<tr><td>{k}</td><td class=n>{dim(k)}</td><td class=n>{ci(b[k])}</td>"
+        f"<td class=n>{'&mdash;' if k == ref else f'{g[k][chr(103)+chr(97)+chr(112)]:+.3f}'}</td>"
+        f"<td class=n>{'&mdash;' if k == ref else f'{g[k][chr(119)+chr(105)+chr(110)+chr(115)]}/{g[k][chr(110)]}'}</td></tr>"
+        for k in order)
+    kg = b["KL over the whole protein (64 layers)"]["mean"]
+    ks = b["KL at the mutated site only (64 layers)"]["mean"]
+    prof = g["row, per-partner magnitude only"]
+    return f"""
+<section id=scope>
+<h2>Is one averaged pair row too narrow a view?</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">objection answered</span>
+<h3>The averaged row is the best view tested &mdash; but not because the effect is local</h3></div>
+<p>Everything on this page rests on <code>dz_site</code>, the mutated residue's
+pair row averaged over its partners. That is not one residue's activation
+&mdash; it is that residue's relationship to the whole chain &mdash; but it does
+discard two things: <em>which</em> partners moved, and every pair in which the
+mutated residue takes no part. A mutation can perturb the fold far from where it
+sits, so this had to be tested rather than assumed. It was inherited from the
+original capture and every result downstream depends on it.</p>
+<div class=scroll><table>
+<thead><tr><th>view</th><th>dimensions</th><th>held-out &rho;</th>
+<th>vs the averaged row</th><th>assays won</th></tr></thead>
+<tbody>{rows}</tbody></table></div>
+<p><b>The averaging costs nothing measurable.</b> The comparison that carries
+weight is per-partner magnitude (~{dim('row, per-partner magnitude only')} dims)
+against the channel average ({dim(ref)} dims) &mdash; similar size, both
+well-conditioned &mdash; and the average wins by
+<b>{-prof['gap']:+.3f}</b>. How the channels moved carries substantially more
+than which partners moved.</p>
+<p class=ci><b>A caveat that applies to this page's own argument.</b> The full
+unaveraged row scoring worst does NOT show its detail is uninformative: it
+contains the average as a linear function, so it can only hold more information.
+At ~{dim('row, full (partners x channels)')} dimensions against 250 rows that is
+an estimation failure, not an information one &mdash; exactly the
+curse-of-dimensionality argument used elsewhere here to defend the internal side
+against the output side, and it applies symmetrically. Only the per-partner
+comparison is decisive.</p>
+</div>
+<div class="card">
+<div class=row><span class="chip c-run">the informative part</span>
+<h3>The effect is distributed; the row is an efficient summary of it</h3></div>
+<p>No archived tensor holds &Delta;z for pairs where neither residue is the
+mutation site, but the divergence features stand in for it: <code>kl_site</code>
+averages over sampled pairs that <em>touch</em> the mutated residue,
+<code>kl_glob</code> over <em>all</em> sampled pairs, most of which do not.</p>
+<p>The whole-protein view is the <b>stronger</b> of the two &mdash;
+{kg:+.3f} against {ks:+.3f} &mdash; and combining them adds nothing. So a
+mutation's influence genuinely reaches beyond its own row. What makes
+<code>dz_site</code> work is therefore not that the perturbation is local, but
+that the mutated residue's row <b>aggregates that distributed influence across
+every partner</b>. It is an efficient summary of a spread-out effect rather than
+a narrow window onto a confined one.</p>
+<p class=ci>Not tested: &Delta;z itself off the row. <code>kl_glob</code> is a
+scalar summary of the distogram, not of the representation, and storing the full
+pair tensor is N&sup2;&times;128 per layer per variant. Closing this properly
+needs a capture that keeps one global &Delta;z summary alongside the row.</p>
+</div>
+</section>"""
+
+
 A_SVD = str(W / "runs/svd_dz_v2.json")
 
 
@@ -838,11 +912,13 @@ def main():
     ap.add_argument("--ablate", default=str(W / "runs/ablate_v1.json"))
     ap.add_argument("--xmodel", default=str(W / "runs/xmodel_v1.json"))
     ap.add_argument("--depth", default=str(W / "runs/depth_v1.json"))
+    ap.add_argument("--scope", default=str(W / "runs/scope_v1.json"))
     a = ap.parse_args()
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
     Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
     C, AB, X, DP = (load(a.chem), load(a.ablate), load(a.xmodel), load(a.depth))
+    SC = load(a.scope)
     css = (OUT / "style.css").read_text()
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
@@ -885,6 +961,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 {sec_symmetry(Y)}
 {sec_methods(S, C)}
 {sec_dims(S, DS)}
+{sec_scope(SC)}
 {sec_shared(S)}
 {sec_what(S)}
 {sec_transfer(S, TR)}
@@ -1028,7 +1105,7 @@ key.</li>
     for nm, obj in (("svd dz", S), ("svd ds", DS), ("drift", Dj),
                     ("transfer", TR), ("pc2", Q), ("symmetry", Y),
                     ("steer", T), ("chem", C), ("ablate", AB),
-                    ("xmodel", X), ("depth", DP)):
+                    ("xmodel", X), ("depth", DP), ("scope", SC)):
         print(f"   {nm:10s} {'ok' if obj else 'MISSING -> pending card'}")
 
 
