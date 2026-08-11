@@ -35,6 +35,7 @@ import argparse
 import glob
 import sys
 from collections import defaultdict
+import json
 from pathlib import Path
 
 import numpy as np
@@ -71,11 +72,17 @@ def fit_deep(X, y, pos, tr, te, seed, k=16):
     return pi_stats.spearman(ridge_pred(w, Xs[te]), y[te])
 
 
+TM_WARNED = []
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--glob", default="runs/deep2_*.npz")
     ap.add_argument("--splits", type=int, default=5)
     ap.add_argument("--n-boot", type=int, default=10000)
+    ap.add_argument("--out", default="", help="archive the printed numbers as "
+                    "JSON; without it these results cannot feed a report under "
+                    "the provenance contract, which is why they never had")
     ap.add_argument("--match-depth", type=int, default=0,
                     help="resample every model's per-layer features onto this many "
                          "evenly spaced RELATIVE depths, so all models contribute "
@@ -118,7 +125,21 @@ def main():
             blocks.append(v)
         X = np.concatenate(blocks, axis=1)                      # [n, 4*depth]
         caw = d["ca_wt"].astype(float)
-        tm = np.array([geom.tm_score(c.astype(float), caw) for c in d["ca"]])
+        # TM needs `tmtools`, which is not in the analysis container. Rather
+        # than substitute a different metric under the same name -- a silent
+        # way to publish a number nobody computed -- TM is dropped when the
+        # dependency is missing and every TM cell reports as NaN. The pLDDT
+        # comparison below is unaffected, and is the stronger baseline anyway:
+        # it is the model's OWN uncertainty head, which is the objection a
+        # referee raises first.
+        try:
+            tm = np.array([geom.tm_score(c.astype(float), caw) for c in d["ca"]])
+        except ModuleNotFoundError as e:
+            if not TM_WARNED:
+                print(f"   NOTE: TM unavailable ({e.name} not installed) -- "
+                      f"TM columns will be NaN; pLDDT comparisons still run")
+                TM_WARNED.append(1)
+            tm = np.full(len(d["ca"]), np.nan)
         pl = d["plddt_mean"] if "plddt_mean" in d.files else d["plddt"]
         pl = pl.mean(-1) if pl.ndim > 1 else pl
 
@@ -198,6 +219,54 @@ def main():
           "output.\n  They are not a ranking of the models: layer counts, "
           "distogram grids and\n  alignment handling differ, and four assays "
           "cannot separate three models.")
+
+    if args.out:
+        # Exactly the quantities printed above, nothing recomputed.
+        out = {"models": list(models), "n_assays": n_assays,
+               "splits": args.splits, "order": ORDER,
+               "layers": {m: int(meta[m]) for m in models},
+               "assays": sorted(variants),
+               "fidelity": {m: (None if fidelity.get(m, (None, None))[0] is None
+                                else {"drift": float(fidelity[m][0]),
+                                      "signal_over_drift":
+                                          (None if not np.isfinite(fidelity[m][1])
+                                           else float(fidelity[m][1]))})
+                            for m in models},
+               "spearman": {}, "internal_minus_tm": {}, "internal_minus_plddt": {}}
+        for m in models:
+            out["spearman"][m] = {
+                k: float(np.nanmean(np.concatenate(
+                    [np.asarray(v) for v in per[m][k].values()])))
+                for k in ORDER}
+            pt, lo, hi, nk = pi_stats.paired_cluster_bootstrap(
+                dict(per[m]["internal (deep)"]), dict(per[m]["TM to WT"]),
+                n_boot=args.n_boot, seed=0)
+            wins = sum(1 for a in per[m]["internal (deep)"]
+                       for x, yv in zip(per[m]["internal (deep)"][a],
+                                        per[m]["TM to WT"][a])
+                       if np.isfinite(x) and np.isfinite(yv) and x > yv)
+            tot = sum(len(v) for v in per[m]["internal (deep)"].values())
+            ptp, lop, hip, nkp = pi_stats.paired_cluster_bootstrap(
+                dict(per[m]["internal (deep)"]), dict(per[m]["pLDDT"]),
+                n_boot=args.n_boot, seed=0)
+            winsp = sum(1 for a in per[m]["internal (deep)"]
+                        for x, yv in zip(per[m]["internal (deep)"][a],
+                                         per[m]["pLDDT"][a])
+                        if np.isfinite(x) and np.isfinite(yv) and x > yv)
+            out["internal_minus_plddt"][m] = {
+                "gap": float(ptp), "ci_lo": float(lop), "ci_hi": float(hip),
+                "wins": int(winsp), "splits": int(tot), "n_assays": int(nkp),
+                "per_assay": {a: float(np.nanmean(per[m]["internal (deep)"][a])
+                                       - np.nanmean(per[m]["pLDDT"][a]))
+                              for a in sorted(per[m]["internal (deep)"])}}
+            out["internal_minus_tm"][m] = {
+                "gap": float(pt), "ci_lo": float(lo), "ci_hi": float(hi),
+                "wins": int(wins), "splits": int(tot), "n_assays": int(nk),
+                "per_assay": {a: float(np.nanmean(per[m]["internal (deep)"][a])
+                                       - np.nanmean(per[m]["TM to WT"][a]))
+                              for a in sorted(per[m]["internal (deep)"])}}
+        Path(args.out).write_text(json.dumps(out, indent=2, default=float))
+        print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":

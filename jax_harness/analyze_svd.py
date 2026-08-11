@@ -463,17 +463,26 @@ def main():
         seg = per_layer[lo:lo + 8]
         print(f"     layers {lo:2d}-{lo + len(seg) - 1:2d}  " +
               " ".join(f"{v:.3f}" for v in seg))
-    g = {f"{names[i]}|{names[j]}": [float(np.nanmean(M[i, j, -8:]))]
+    g = {f"{names[i]}|{names[j]}": float(np.nanmean(M[i, j, -8:]))
          for i, j in zip(*iu)}
-    pt, lo_, hi_ = pi_stats.cluster_bootstrap(g, n_boot=10000, seed=0,
-                                              hierarchical=False)[:3]
-    print(f"\n   last 8 layers, pooled over assay pairs: {pt:.3f} "
-          f"[{lo_:.3f}, {hi_:.3f}]  vs chance {chance:.3f}")
+    # The unit here is the ASSAY, not the assay pair. These 66 numbers come from
+    # 12 proteins, each appearing in 11 pairs, so a bootstrap over pair keys
+    # treats dependent values as independent. On simulated graphs with the same
+    # dependence structure that interval covers the truth 43% of the time at a
+    # nominal 95%; the delete-one-assay jackknife covers 96%.
+    pt, lo_, hi_, n_nodes, se_ = pi_stats.pairwise_node_jackknife(g)
+    print(f"\n   last 8 layers, over {len(g)} pairs from {n_nodes} assays: "
+          f"{pt:.3f} [{lo_:.3f}, {hi_:.3f}]  vs chance {chance:.3f}")
+    print(f"   (delete-one-assay jackknife, se {se_:.4f}; the resampling unit "
+          f"is the assay because each one sits in {n_nodes - 1} pairs)")
     res["subspace_agreement"] = {"k": k, "chance": chance,
                                  "per_layer_mean": per_layer.tolist(),
                                  "last8_pooled": {"mean": pt, "ci_lo": lo_,
-                                                  "ci_hi": hi_},
-                                 "pairs_last8": {kk: v[0] for kk, v in g.items()}}
+                                                  "ci_hi": hi_, "se": se_,
+                                                  "n_nodes": n_nodes,
+                                                  "unit": "assay (delete-one "
+                                                          "jackknife)"},
+                                 "pairs_last8": dict(g)}
     store["subspace_matrix"] = M
 
     # ======================================================================

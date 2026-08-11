@@ -83,6 +83,14 @@ def trunk_capture(model, feats, ii, jj, row, *, recycles, key):
 
     `row` is the index of the mutated residue among valid tokens, resolved by
     the caller so the reduce_fn stays a pure function of the traced arrays.
+
+    `row=None` returns the per-layer rows for EVERY residue instead of one.
+    That exists because the wild-type reference does not depend on the variant
+    -- `f_wt`, the pair sample and the key are all fixed, and only `row` differs
+    -- so recomputing the whole trunk per variant to index a different row is
+    pure waste. It is the same waste the WT distogram moments below already
+    avoid. `z_[0].mean(axis=1)` is computed in full either way, so returning it
+    whole costs nothing and halves the trunk work in the variant loop.
     """
     emb = model.embed_inputs(feats)
     state = TrunkState(s=jnp.zeros_like(emb.s_init), z=jnp.zeros_like(emb.z_init))
@@ -99,11 +107,13 @@ def trunk_capture(model, feats, ii, jj, row, *, recycles, key):
     )
 
     def reduce_fn(s_, z_):
-        return {
-            "logits": model.distogram_module(z_)[0, :, :, 0, :][ii, jj],
-            "z_site": z_[0].mean(axis=1)[row],
-            "s_site": s_[0][row],
-        }
+        out = {"logits": model.distogram_module(z_)[0, :, :, 0, :][ii, jj]}
+        zm = z_[0].mean(axis=1)
+        if row is None:
+            out["z_full"], out["s_full"] = zm, s_[0]
+        else:
+            out["z_site"], out["s_site"] = zm[row], s_[0][row]
+        return out
 
     s, z, per = pi.pairformer_capture(
         model.pairformer_module, s, z, mask, pair_mask,
@@ -124,6 +134,9 @@ def main():
     ap.add_argument("--msa-cap", type=int, default=2048)
     ap.add_argument("--sampling-steps", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--verify-cache", type=int, default=0,
+                    help="check the cached WT reference against a fresh trunk "
+                         "pass for the first N variants; 0 disables")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -182,9 +195,11 @@ def main():
         ca = np.asarray(out.backbone_coordinates)[mask][:, 1].astype(np.float32)
         return float(p.mean()), float(p[row]), ca
 
-    emb_w, tr_w, ref = trunk_capture(model, f_wt, ii, jj, 0, recycles=args.recycles, key=key)
+    emb_w, tr_w, ref = trunk_capture(model, f_wt, ii, jj, None,
+                                     recycles=args.recycles, key=key)
     lw = np.asarray(ref["logits"])
     L = lw.shape[0]
+    wt_z, wt_s = np.asarray(ref["z_full"]), np.asarray(ref["s_full"])
     # WT moments are fixed across variants, so pay for them once.
     mu_w, sd_w = pi_conf.moments(_softmax(lw.astype(np.float32)))
     pl_wt_mean, _, ca_wt = structure_of(emb_w, tr_w, f_wt, 0)
@@ -200,8 +215,21 @@ def main():
             continue
         row = pos_of[p0]
         f_m, hm = featurise(r["mutated_sequence"], "mut")
-        # the WT reference for z_site/s_site must be taken at the SAME residue
-        _, _, refr = trunk_capture(model, f_wt, ii, jj, row, recycles=args.recycles, key=key)
+        # The WT reference must be read at the SAME residue -- but it is a slice
+        # of the wild-type capture taken once above, not a fresh trunk pass.
+        ref_z, ref_s = wt_z[:, row], wt_s[:, row]
+        if args.verify_cache and n < args.verify_cache:
+            _, _, chk = trunk_capture(model, f_wt, ii, jj, row,
+                                      recycles=args.recycles, key=key)
+            dz = float(np.abs(np.asarray(chk["z_site"]) - ref_z).max())
+            ds = float(np.abs(np.asarray(chk["s_site"]) - ref_s).max())
+            print(f"   verify row {row}: |dz| {dz:.3e}  |ds| {ds:.3e}", flush=True)
+            if max(dz, ds) > 0.0:
+                raise SystemExit(
+                    f"cached wild-type reference differs from a fresh trunk "
+                    f"pass at row {row} (|dz| {dz:.3e}, |ds| {ds:.3e}). The "
+                    f"cache is not an exact refactor and every dz_site below "
+                    f"would be wrong by that much.")
         emb_m, tr_m, cur = trunk_capture(model, f_m, ii, jj, row, recycles=args.recycles, key=key)
         lm = np.asarray(cur["logits"])
         kl = skl(lm, lw)
@@ -212,8 +240,8 @@ def main():
         # sampled pairs -- the last representation before the structure module
         dis = np.asarray(cur["logits"])[-1]
 
-        Z.append((np.asarray(cur["z_site"]) - np.asarray(refr["z_site"])).astype(np.float32))
-        S.append((np.asarray(cur["s_site"]) - np.asarray(refr["s_site"])).astype(np.float32))
+        Z.append((np.asarray(cur["z_site"]) - ref_z).astype(np.float32))
+        S.append((np.asarray(cur["s_site"]) - ref_s).astype(np.float32))
         KLg.append(kl.mean(1).astype(np.float32))
         KLs.append((kl[:, at].mean(1) if at.any() else np.zeros(L)).astype(np.float32))
         PL.append(pm); PLs.append(ps); CA.append(ca); DIS.append(dis.astype(np.float32))

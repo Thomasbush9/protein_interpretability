@@ -6,15 +6,22 @@ channels, which made the asymmetry a genuine threat to the headline claim. These
 panels run one protocol over both sides and show what happens.
 
   A  held-out Spearman against the number of directions kept, every block on the
-     same axes. Internal is a single fixed layer; the output blocks run up to
-     1741 dimensions.
+     same axes. Internal is a single fixed layer; the output blocks run to
+     whatever the widest archived block is.
   B  the paired per-assay difference at a pre-specified k, with the win count.
-  C  the answer to the obvious objection. "Output does badly at 1741 dimensions"
-     could just be the curse of dimensionality with n = 250. It is not: the
-     output side was described at five sizes spanning ten to 1741 dimensions and
-     its ceiling is flat across all of them, while internal at 128 sits far
-     above. Plotting ceiling against dimensionality is what distinguishes an
-     estimator problem from an information problem, so it gets its own panel.
+  C  the answer to the obvious objection. "Output does badly at ~1800
+     dimensions" could just be the curse of dimensionality with n = 250. It is
+     not: the output side is described at several sizes spanning ten to the
+     widest block and its ceiling is flat across all of them, while internal at
+     128 sits far above. Plotting ceiling against dimensionality is what
+     distinguishes an estimator problem from an information problem, so it gets
+     its own panel.
+
+Every dimension count in this figure is READ FROM the archive. An earlier
+version hardcoded 1741 in the legend and in panel C's annotation, and carried no
+STYLE entry for the two per-residue pLDDT blocks, so pointing it at a newer run
+silently dropped those two series and kept printing the old width. Blocks
+present in the data but absent from STYLE now raise instead of vanishing.
 """
 from __future__ import annotations
 
@@ -38,15 +45,20 @@ plt.rcParams.update({
     "axes.spines.top": False, "axes.spines.right": False,
 })
 C_INT, C_ALL, C_RICH, C_DISP, C_GEO = "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#8a8885"
+C_PLD = "#9d5bd2"
 
 INTERNAL = "internal dz (last layer)"
+# (colour, linewidth, linestyle, label template). "{d}" is filled from the
+# archived per-assay dimension counts -- never typed in.
 STYLE = {
-    INTERNAL:                       (C_INT,  2.6, "-",  "internal Δz (1 layer, 128)"),
-    "output all (max generosity)":  (C_ALL,  2.0, "-",  "output: everything (1741)"),
-    "output rich (published)":      (C_RICH, 2.0, "-",  "output: rich (10, published)"),
-    "output displacement":          (C_DISP, 1.6, "-",  "output: displacement (~68)"),
-    "output coordinates":           (C_GEO,  1.4, "--", "output: coordinates (~207)"),
-    "output pair distances":        (C_GEO,  1.4, ":",  "output: pair distances (~1479)"),
+    INTERNAL:                       (C_INT,  2.6, "-",  "internal Δz (1 layer, {d})"),
+    "output all (max generosity)":  (C_ALL,  2.0, "-",  "output: everything ({d})"),
+    "output pLDDT + rich":          (C_PLD,  2.2, "-",  "output: pLDDT + rich (~{d})"),
+    "output pLDDT per residue":     (C_PLD,  1.6, "--", "output: pLDDT per residue (~{d})"),
+    "output rich (published)":      (C_RICH, 2.0, "-",  "output: rich ({d}, published)"),
+    "output displacement":          (C_DISP, 1.6, "-",  "output: displacement (~{d})"),
+    "output coordinates":           (C_GEO,  1.4, "--", "output: coordinates (~{d})"),
+    "output pair distances":        (C_GEO,  1.4, ":",  "output: pair distances (~{d})"),
 }
 
 ap = argparse.ArgumentParser()
@@ -59,12 +71,29 @@ S = json.load(open(a.symmetry))
 CV = S["components_view"]
 ks = sorted(int(k) for k in CV[INTERNAL])
 
+# A block the archive scores but STYLE does not know about would previously be
+# dropped without a word -- which is how a figure built from a run containing
+# per-residue pLDDT went out showing the five older blocks. Fail instead.
+unstyled = [bn for bn in CV if bn not in STYLE]
+if unstyled:
+    raise SystemExit(
+        f"{a.symmetry} scores blocks with no STYLE entry: {unstyled}\n"
+        "Add them to STYLE -- silently dropping them is how the stale figure "
+        "in report_svd happened."
+    )
+
+dims = S["protocol"]["dims"]
+DIM = {bn: int(round(float(np.mean([dims[n][bn] for n in dims if bn in dims[n]]))))
+       for bn in CV}
+LABEL = {bn: STYLE[bn][3].format(d=DIM[bn]) for bn in CV}
+OUT_DIMS = [DIM[bn] for bn in CV if bn != INTERNAL]
+
 fig = plt.figure(figsize=(14.6, 4.8))
 gs = fig.add_gridspec(1, 3, wspace=0.30, width_ratios=[1.25, 1.0, 1.0])
 
 # --- A: the curves ---------------------------------------------------------
 axA = fig.add_subplot(gs[0, 0])
-for bn, (col, lw, ls, lab) in STYLE.items():
+for bn, (col, lw, ls, _tmpl) in STYLE.items():
     if bn not in CV:
         continue
     m = np.array([CV[bn][str(k)]["mean"] for k in ks])
@@ -72,7 +101,7 @@ for bn, (col, lw, ls, lab) in STYLE.items():
     hi = np.array([CV[bn][str(k)]["ci_hi"] for k in ks])
     if bn == INTERNAL:
         axA.fill_between(ks, lo, hi, color=col, alpha=0.13, lw=0, zorder=2)
-    axA.plot(ks, m, color=col, lw=lw, ls=ls, zorder=4, label=lab,
+    axA.plot(ks, m, color=col, lw=lw, ls=ls, zorder=4, label=LABEL[bn],
              solid_capstyle="round")
 axA.set_xscale("log", base=2)
 axA.set_xticks(ks); axA.set_xticklabels([str(k) for k in ks])
@@ -102,7 +131,7 @@ for i, (bn, g) in enumerate(items):
                  fontsize=7.8, color=INK2)
 axB.axvline(0, color=INK, lw=1.2, zorder=3)
 axB.set_yticks(y)
-axB.set_yticklabels([STYLE[bn][3].replace("output: ", "") for bn, _ in items],
+axB.set_yticklabels([LABEL[bn].replace("output: ", "") for bn, _ in items],
                     fontsize=7.8)
 axB.set_xlabel("internal − output (paired, per assay)")
 axB.set_title(f"B  Every assay, every block\n     at k = {a.k_report}",
@@ -112,30 +141,35 @@ axB.margins(x=0.32)
 
 # --- C: is it an estimator problem or an information problem? --------------
 axC = fig.add_subplot(gs[0, 2])
-dims = S["protocol"]["dims"]
-first = next(iter(dims))
-for bn, (col, lw, ls, lab) in STYLE.items():
+for bn, (col, lw, ls, _tmpl) in STYLE.items():
     if bn not in CV:
         continue
-    d = float(np.mean([dims[n][bn] for n in dims]))
+    d = DIM[bn]
     best = max(CV[bn][str(k)]["mean"] for k in ks)
     axC.scatter([d], [best], s=110 if bn == INTERNAL else 62, color=col,
                 zorder=5, edgecolor=SURF, linewidth=1.8)
-    # The two largest output blocks sit close in both dimensions and in score,
-    # so their labels are placed explicitly rather than by a shared rule.
-    dx, dy, ha = {"output pair distances": (-6, -16, "right"),
-                  "output all (max generosity)": (6, 11, "left"),
-                  "output coordinates": (0, -16, "center"),
-                  "output displacement": (0, -16, "center"),
+    # Several blocks sit close in both dimensions and in score, so their labels
+    # are placed explicitly rather than by a shared rule.
+    # Two pairs of blocks land on top of each other here -- displacement and
+    # per-residue pLDDT are both ~69 dimensions, and coordinates and pair
+    # distances both sit on the floor of the band -- so every label is placed
+    # by hand and the collisions are checked by eye after each rebuild.
+    dx, dy, ha = {"output pair distances": (9, -14, "left"),
+                  "output all (max generosity)": (0, 12, "center"),
+                  "output coordinates": (-9, -14, "right"),
+                  "output displacement": (0, -17, "center"),
+                  "output pLDDT per residue": (11, -3, "left"),
+                  "output pLDDT + rich": (0, 12, "center"),
                   }.get(bn, (0, 11, "center"))
-    axC.annotate(lab.split(" (")[0].replace("output: ", ""), xy=(d, best),
+    axC.annotate(LABEL[bn].split(" (")[0].replace("output: ", ""), xy=(d, best),
                  xytext=(dx, dy), textcoords="offset points", fontsize=7.2,
                  color=col, ha=ha)
 out_best = [max(CV[bn][str(k)]["mean"] for k in ks) for bn in CV if bn != INTERNAL]
 axC.axhspan(min(out_best), max(out_best), color=C_GEO, alpha=0.13, lw=0, zorder=1)
-axC.annotate("every output description,\n10 to 1741 dimensions",
-             xy=(1741, max(out_best)), xytext=(-4, 12), textcoords="offset points",
-             fontsize=7.2, color=C_GEO, ha="right")
+axC.annotate(f"every output description,\n{min(OUT_DIMS)} to {max(OUT_DIMS)} dimensions",
+             xy=(max(OUT_DIMS), max(out_best)), xytext=(-4, 32),
+             textcoords="offset points", fontsize=7.2, color=C_GEO, ha="right")
+axC.margins(x=0.20)
 axC.set_xscale("log")
 axC.set_xlabel("dimensions given to the block")
 axC.set_ylabel("best held-out Spearman over k")

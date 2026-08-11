@@ -195,6 +195,61 @@ def paired_cluster_bootstrap(groups_a, groups_b, n_boot=10000, seed=0,
                              hierarchical=hierarchical, ci=ci)
 
 
+def pairwise_node_jackknife(pairs, sep="|", ci=(2.5, 97.5)):
+    """Interval for a mean over PAIRS when the pairs share nodes.
+
+    Same error as `mantel_permutation` guards against, one level up. A complete
+    graph on 12 assays has 66 pairs, but each assay sits in 11 of them, so
+    resampling pairs treats 66 dependent numbers as 66 independent ones and
+    returns an interval that is too narrow by roughly the square root of the
+    pair multiplicity. `cluster_bootstrap` keyed on "A|B" does exactly that;
+    the resampling unit has to be the assay, not the pair.
+
+    Delete-one-NODE jackknife (Arvesen's estimator for a U-statistic of degree
+    two): drop assay a, recompute the mean over the pairs that survive, and
+    take the spread of those n leave-one-out means. Returns
+    (point, lo, hi, n_nodes, se).
+
+    The interval is normal-form around the point estimate with a t_{n-1}
+    critical value rather than a z. At the n = 12 this project has, t is the
+    honest choice and costs about 10% width.
+
+    `pairs` maps "A<sep>B" to that pair's value.
+    """
+    from scipy.stats import t as _t
+
+    vals, nodes = {}, set()
+    for key, v in pairs.items():
+        v = float(np.asarray(v, dtype=float).ravel()[0])
+        if not np.isfinite(v):
+            continue
+        a, b = key.split(sep)
+        vals[(a, b)] = v
+        nodes.update((a, b))
+    nodes = sorted(nodes)
+    n = len(nodes)
+    if not vals:
+        return float("nan"), float("nan"), float("nan"), 0, float("nan")
+    point = float(np.mean(list(vals.values())))
+    if n < 3:
+        return point, float("nan"), float("nan"), n, float("nan")
+
+    loo = []
+    for a in nodes:
+        keep = [v for (x, y), v in vals.items() if x != a and y != a]
+        if keep:
+            loo.append(np.mean(keep))
+    loo = np.asarray(loo, dtype=float)
+    m = len(loo)
+    # (m-1)/m * sum of squared deviations -- the jackknife variance, which
+    # inflates the naive spread of leave-one-out means back to the scale of the
+    # statistic. Without that factor this reports the variance of an average of
+    # m-1 of the data and understates the interval about m-fold.
+    se = float(np.sqrt((m - 1) / m * np.sum((loo - loo.mean()) ** 2)))
+    crit = float(_t.ppf(ci[1] / 100.0, m - 1))
+    return point, point - crit * se, point + crit * se, n, se
+
+
 def mantel_permutation(rdm_x, rdm_y, n_items, iu=None, covars=(), n_perm=10000,
                        seed=0):
     """Mantel test: permute the n ITEMS, not the n(n-1)/2 pair entries.

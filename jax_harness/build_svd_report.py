@@ -4,17 +4,186 @@ Same contract as `build_mech_report.py`: every number on the page is read from
 an analysis output rather than typed, and a missing input renders as a visible
 "not yet run" card instead of a stale figure. If a claim in the prose has a
 number in it, that number came out of `runs/`.
+
+That contract held for the arithmetic and failed for everything around it. The
+August 2026 review found three defects that were all the same defect:
+
+  * the archived `report_svd/data/svd_dz_v2.json` was the superseded free-row
+    permutation run, while the prose was built from `svd_dz_v3.json` -- the
+    right file was read and the wrong file was filed, by hand, days apart;
+  * `figures/symmetry.png` was generated from `symmetry_v2.json` while the text
+    beside it came from v3, so the figure showed five output blocks and 1741
+    dimensions against the prose's eight and 1831;
+  * one sentence -- "Every assay returns p = 0.000" -- was a hardcoded literal
+    inside an otherwise derived paragraph, and it was false: NKX31 returns
+    0.009 and PSAE 0.001.
+
+The cause was that the correct build depended on `--svd`/`--symmetry` flags
+typed at a shell and recorded nowhere, while the defaults still pointed at the
+older runs. So the builder now owns its own provenance:
+
+  * defaults point at the current runs, and `A_SVD` is no longer re-loaded
+    behind the caller's back (one number in the single-track note used to come
+    from the default path even when `--svd` was overridden);
+  * every resolved input is copied into `report_svd/data/` by this script, with
+    a `manifest.json` recording each path, size and SHA-256;
+  * a figure older than the JSON it is drawn from aborts the build and prints
+    the command to regenerate it;
+  * the footer is generated, and stamps the commit, the build time and the
+    manifest digest.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).parent))
+import pi_stats  # noqa: E402
+
 W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
 OUT = W / "report_svd"
+# Jobs execute `$W/harness/*.py`, which is an unversioned COPY of the git
+# working tree -- so the commit has to be read from the repo, and the copy has
+# to be checked against it. A build from a harness that has drifted from the
+# repo is not reproducible from the repo, whatever the commit says.
+REPO = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/"
+            "protein_interpretability/jax_harness")
+
+# figure file -> (the --flag whose JSON it is drawn from, how to rebuild it).
+# The template is formatted with every resolved input plus `out`, so the command
+# it prints is the complete one and not a sketch to be filled in by hand -- the
+# hand-filling is what put a v2 figure next to v3 prose in the first place.
+FIGSPEC = {
+    "svd.png":      ("svd", "fig_svd.py --svd {svd} --svd-ds {svd_ds} --out {out}"),
+    "symmetry.png": ("symmetry", "fig_symmetry.py --symmetry {symmetry} --out {out}"),
+    "chem.png":     ("chem", "fig_chem.py --chem {chem} --out {out}"),
+    "xmodel.png":   ("xmodel", "fig_xmodel.py --xmodel {xmodel} --out {out}"),
+    "depth.png":    ("depth", "fig_depth.py --depth {depth} --out {out}"),
+    "pc2.png":      ("pc2", "fig_pc2.py --pc2 {pc2} --out {out}"),
+    "drift.png":    ("drift", "fig_drift.py --drift {drift} --out {out}"),
+    "steer.png":    ("steer", "fig_steer.py --steer {steer} --out {out}"),
+    "heldout.png":  ("heldout", "fig_heldout.py --heldout {heldout} --out {out}"),
+}
+
+
+def sha256(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_figures(resolved, allow_stale=False):
+    """Abort if a figure predates the JSON it is drawn from.
+
+    This is the mechanical replacement for noticing by eye. mtime is a weak
+    check -- it cannot see a figure rebuilt from the wrong file -- so the
+    manifest also records the digest of every source, which makes the pairing
+    auditable after the fact.
+    """
+    stale = []
+    for fig, (key, cmd) in FIGSPEC.items():
+        fp, src = OUT / "figures" / fig, resolved.get(key)
+        if not fp.exists() or src is None or not Path(src).exists():
+            continue
+        if fp.stat().st_mtime < Path(src).stat().st_mtime:
+            stale.append((fig, key, cmd.format(out=fp, **resolved)))
+    if stale and not allow_stale:
+        lines = "\n".join(f"    {c}" for _, _, c in stale)
+        raise SystemExit(
+            "figures older than the data they are drawn from:\n"
+            + "\n".join(f"  {f}  (source: --{k})" for f, k, _ in stale)
+            + "\n\nregenerate, then rebuild:\n" + lines
+            + "\n\n(--allow-stale-figures overrides, but the last time a figure "
+              "and its prose disagreed it reached a reviewer.)"
+        )
+    return [f for f, _, _ in stale]
+
+
+def archive_inputs(resolved, stale):
+    """Copy every resolved input into report_svd/data/ and write a manifest.
+
+    Previously this was done by hand, which is how the data directory ended up
+    holding a JSON the report was not built from.
+    """
+    dd = OUT / "data"
+    dd.mkdir(parents=True, exist_ok=True)
+    entries, kept = {}, set()
+    for key, src in sorted(resolved.items()):
+        if src is None or not Path(src).exists():
+            continue
+        src = Path(src)
+        shutil.copy2(src, dd / src.name)
+        kept.add(src.name)
+        entries[key] = {"file": src.name, "source": str(src),
+                        "bytes": src.stat().st_size, "sha256": sha256(src)}
+    orphans = sorted(p.name for p in dd.glob("*.json")
+                     if p.name not in kept and p.name != "manifest.json")
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                cwd=REPO, capture_output=True,
+                                text=True, timeout=10).stdout.strip() or "unknown"
+    except Exception:
+        commit = "unknown"
+
+    # Digest the code that actually ran, and say so when it differs from the
+    # repo at that commit. Without this the commit is decoration: the harness
+    # copy can be any age.
+    here = Path(__file__).parent
+    code, drifted = {}, []
+    for name in ["build_svd_report.py", "pi_stats.py"] + sorted(
+            {c.split()[0] for _, c in FIGSPEC.values()}):
+        p = here / name
+        if not p.exists():
+            continue
+        code[name] = sha256(p)
+        r = REPO / name
+        if r.exists() and sha256(r) != code[name]:
+            drifted.append(name)
+
+    built = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    manifest = {"built": built, "commit": commit, "inputs": entries,
+                "code_sha256": code, "code_drifted_from_repo": drifted,
+                "figures_stale_at_build": stale,
+                "orphaned_in_data_dir": orphans}
+    if drifted:
+        print(f"   WARNING: harness copy differs from the repo at {commit} for "
+              f"{', '.join(drifted)} -- this build is not reproducible from "
+              f"that commit")
+    (dd / "manifest.json").write_text(json.dumps(manifest, indent=1))
+
+    # The README lists the archive by filename and went stale for three days
+    # naming svd_dz_v2.json, which no longer exists here. Cheap to check.
+    #
+    # Only the fenced blocks are checked. The prose deliberately names files that
+    # are NOT inputs -- the corrections section has to be able to say which file
+    # used to be wrong -- and flagging those would train the reader to ignore
+    # this warning, which is worse than not having it.
+    rm = OUT / "README.md"
+    if rm.exists():
+        fenced = "\n".join(re.findall(r"```.*?```", rm.read_text(), re.S))
+        ghosts = sorted({w for w in re.findall(r"[\w./-]+\.json", fenced)
+                         if Path(w).name not in kept
+                         and Path(w).name != "manifest.json"})
+        if ghosts:
+            print(f"   WARNING: README.md names {len(ghosts)} JSON(s) that are "
+                  f"not inputs to this build: {', '.join(ghosts)}")
+            manifest["readme_ghost_files"] = ghosts
+            (dd / "manifest.json").write_text(json.dumps(manifest, indent=1))
+    if orphans:
+        print(f"   note: {len(orphans)} JSON(s) in data/ are not inputs to this "
+              f"build and are recorded as orphans: {', '.join(orphans)}")
+    return manifest
 
 
 def load(p):
@@ -61,6 +230,35 @@ def sec_dims(S, DS):
     best = max(v["null_max_p95"] for v in nl["per_assay"].values())
     lo_r = min(v["rho"] for v in nl["per_assay"].values())
     hi_r = max(v["rho"] for v in nl["per_assay"].values())
+
+    # This sentence used to read "Every assay returns p = 0.000", typed in.
+    # With 1000 permutations the smallest reportable p is 1/n_perm, and two
+    # assays do not reach it: quoting a floor as an exact zero and averaging
+    # over the two exceptions were the same mistake made twice.
+    n_perm = S["protocol"].get("n_perm")
+    floor = 1.0 / n_perm if n_perm else None
+    ps = {n: v["p_perm_maxstat"] for n, v in nl["per_assay"].items()}
+    at_floor = sorted(n for n, p in ps.items() if floor and p < floor)
+    above = sorted(((p, n) for n, p in ps.items() if not floor or p >= floor))
+    if not above:
+        p_txt = (f"Every assay returns p &lt; {floor:g} &mdash; the resolution "
+                 f"floor at {n_perm} permutations, not a measured zero.")
+    else:
+        named = "; ".join(f"{n} at p = {p:.3f}" for p, n in above)
+        # Whether the weakest p belongs to the weakest rho is a fact about this
+        # run, so it is checked rather than asserted -- asserting it is the
+        # habit that produced "Every assay returns p = 0.000".
+        worst_p = max(above)[1]
+        worst_rho = min(nl["per_assay"], key=lambda n: nl["per_assay"][n]["rho"])
+        coda = (" The weakest is also the assay with the lowest observed "
+                "&rho;, which is the honest place for the null to bite."
+                if worst_p == worst_rho else
+                f" The weakest p belongs to {worst_p}, whose observed &rho; is "
+                f"{nl['per_assay'][worst_p]['rho']:+.3f}; the lowest &rho; is "
+                f"{worst_rho}'s at {nl['per_assay'][worst_rho]['rho']:+.3f}.")
+        p_txt = (f"{len(at_floor)} of {len(ps)} assays return p &lt; {floor:g}, "
+                 f"the resolution floor at {n_perm} permutations. The remaining "
+                 f"{len(above)} are quoted as measured: {named}.{coda}")
     ds_note = ""
     if DS:
         dd = DS["protocol"]["dim"]
@@ -72,7 +270,7 @@ def sec_dims(S, DS):
                    f"<b>{g:+.3f}</b> against <code>dz_site</code>'s "
                    f"<b>{full:+.3f}</b>, and its cross-assay subspace agreement is "
                    f"{sa['last8_pooled']['mean']:.3f} against the pair track's "
-                   f"{load(A_SVD)['subspace_agreement']['last8_pooled']['mean']:.3f}. "
+                   f"{S['subspace_agreement']['last8_pooled']['mean']:.3f}. "
                    f"Whatever the model knows about a mutation, it is written "
                    f"between residue pairs rather than at the residue.</p>")
     return f"""
@@ -113,7 +311,7 @@ the stability component enters.</p>
 <h3>Permutation null, with the layer search paid for</h3></div>
 <p>Observed held-out &rho; at k = {nl['k']} ranges {lo_r:+.3f} to {hi_r:+.3f} across
 assays; the null 95th percentile of max|&rho;| ranges {worst:.3f} to {best:.3f}.
-Every assay returns p = 0.000.</p>
+{p_txt}</p>
 <p>Two corrections stand behind those numbers. The statistic is the
 <em>maximum over layers</em> on both sides, so searching 64 layers is charged to
 the null rather than treated as free. And an earlier version shuffled only the
@@ -126,10 +324,382 @@ mistake produced a &ldquo;null&rdquo; reaching |&rho;| &asymp; 0.70.
 </section>"""
 
 
+def sec_methods_full(S, HO, manifest):
+    """A single Methods section, generated so its numbers cannot drift."""
+    D = S["protocol"]["dim"] if S else 128
+    L = S["protocol"]["n_layers"] if S else 64
+    nperm = S["protocol"].get("n_perm", 1000) if S else 1000
+    basis = S["protocol"]["assays"] if S else []
+    ho_n = len(HO["per_assay"]) if HO else 0
+    ho_var = sum(r["n"] for r in HO["per_assay"].values()) if HO else 0
+    return f"""
+<section id=methods-full>
+<h2>Methods</h2>
+
+<div class="card">
+<h3>Model and capture</h3>
+<p>All internal quantities come from <b>Boltz-2</b> run through
+<a href="https://github.com/escalante-bio/joltz">joltz</a>, a JAX re-implementation
+whose parameters are loaded from the released checkpoint. The Pairformer trunk is
+{L} blocks deep and carries a pair representation
+<code>z[i,&nbsp;j,&nbsp;c]</code> with {D} channels per ordered residue pair,
+alongside a 384-channel single representation <code>s[i,&nbsp;c]</code>.</p>
+<p>Each variant is captured as <b>two forward passes</b>, wild type and mutant,
+under three constraints that make their difference interpretable:</p>
+<ul>
+<li><b>A shared alignment.</b> The mutant sequence is grafted onto the wild
+type's homologs rather than searched separately, so MSA composition and depth
+cannot move with the mutation. A separate search would let alignment
+composition, not the substitution, drive the difference.</li>
+<li><b>Identical randomness.</b> Same PRNG key, same recycle count,
+deterministic sampling. The wild-type trunk pass is deliberately <em>not</em>
+cached across variants even though it is algebraically identical, so that a
+re-capture stays comparable to earlier ones variant-for-variant.</li>
+<li><b>The same row in both passes.</b> Quantities are read at the mutated
+residue's index <code>r</code> in both, so a difference reflects the
+substitution rather than which position is being inspected.</li>
+</ul>
+<p>Captures are verified against their predecessors before use rather than
+assumed faithful: the re-capture that added per-residue pLDDT was checked to
+reproduce the earlier archives at rank &rho; 0.970&ndash;0.9998 on
+<code>kl_glob</code>, with <code>plddt_res[i, pos[i]]</code> reproducing
+<code>plddt_site</code> exactly and <code>dz_row</code> averaging to
+<code>dz_site</code> to 7e&minus;05.</p>
+</div>
+
+<div class="card">
+<h3>Data</h3>
+<p><b>Basis panel:</b> {len(basis)} ProteinGym substitution assays
+({', '.join(basis)}), all Tsuboyama&nbsp;2023 cDNA-display proteolysis stability,
+40&ndash;72 residues, 250 variants sampled per assay.</p>
+<p><b>Held-out panel:</b> {ho_n} further ProteinGym assays, {ho_var} variants,
+selected after the basis was fixed and disjoint from it &mdash; twelve more
+Tsuboyama stability assays and four measuring a different phenotype (ccdB
+toxicity by growth, EnvZ signalling by fluorescent reporter, phototropin by
+fluorescence, HIV Tat by viral replication).</p>
+<p>Alignments are built with ColabFold search against the ProteinGym reference
+sequence. Every assay's variant list is stored with its archive so that two runs
+can be compared row by row.</p>
+</div>
+
+<div class="card">
+<h3>Feature blocks</h3>
+<p>The comparison the report rests on is between what the model <em>computes</em>
+and what it <em>emits</em>, so both sides are defined explicitly.</p>
+<p><b>Internal.</b> <code>dz_site</code> = the mutated residue's pair row
+averaged over partners, differenced between passes, {D} dimensions at one layer.
+Also captured: the unaveraged row <code>dz_row[r, j, :]</code>, the single-track
+<code>ds_site</code> (384), and per-layer symmetric-KL summaries of the
+distogram.</p>
+<p><b>Output.</b> Everything the structure module emits: TM to wild type, RMS
+displacement overall and within 8&nbsp;&Aring; and 12&nbsp;&Aring; of the
+mutation, displacement at the site and its maximum, radius-of-gyration change,
+chain-mean and site pLDDT, and &mdash; added after an audit found the output side
+under-served by two confidence scalars &mdash; the full per-residue pLDDT vector.
+The trunk distogram is deliberately excluded from the output side: it is a head
+on the Pairformer, not a product of the structure module.</p>
+<p><b>Chemistry.</b> 17 numbers derived from the two amino-acid letters alone:
+BLOSUM62, signed and absolute changes in hydropathy, volume and charge, the
+wild-type and mutant values of each, and six proline/glycine/cysteine
+indicators. This is the deciding control throughout, because it transfers
+between proteins for free.</p>
+</div>
+
+<div class="card">
+<h3>The PC2 construction</h3>
+<p>Stated once, in order, in the section above &mdash; two passes, the pair row
+at the mutated residue averaged over partners, the difference at the final
+layer, z-scored per channel within each protein, all assays stacked into one
+matrix, one SVD, sign fixed against <code>kl_glob</code>. PC2 is the second
+right singular vector: not searched for and not selected for being predictive.
+A variant's PC2 score is the projection of its standardised, mean-centred
+&Delta;z onto that vector.</p>
+<p>Two versions of the basis exist and conflating them is how a leak would
+enter. Where the basis <em>predicts</em>, it is refit on training positions and
+frozen before held-out rows are projected. Where it only <em>describes</em>, it
+is fitted on all rows and no held-out claim is made from it.</p>
+</div>
+
+<div class="card">
+<h3>Estimator and splits</h3>
+<p>One estimator is used everywhere so that blocks of different width sit on the
+same scale: standardise on the training rows, select the top-<i>k</i> features by
+training |&rho;|, tune <i>k</i> and the ridge penalty on an inner split, fit ridge,
+score Spearman on the held-out rows.</p>
+<p><b>Splits are grouped by residue position</b>, never by variant. Variants at
+one site share a DMS level, so a random row split lets the probe memorise which
+sites are fragile and report it as generalisation. Every held-out number in this
+report is across positions.</p>
+<p>Dimensionality is treated as a confound rather than ignored. Because the
+internal block is {D}-wide and some output blocks are far wider, both sides are
+run through the identical protocol across a sweep of <i>k</i>, and the ceiling
+over <i>k</i> is plotted against block width &mdash; which is what distinguishes
+an estimator problem from an information problem.</p>
+</div>
+
+<div class="card">
+<h3>Statistics</h3>
+<ul>
+<li><b>The unit is the assay.</b> Intervals come from a cluster bootstrap that
+resamples assays, not the repeated splits inside them. Bootstrapping overlapping
+splits would give an interval around splitting noise.</li>
+<li><b>Paired comparisons are paired per assay</b>, and the win count out of 12
+(or 16) is reported beside the interval, because a mean margin with a 5/12 win
+count means something different from the same margin at 12/12.</li>
+<li><b>Pairwise quantities resample nodes.</b> The cross-assay subspace
+agreement is a mean over 66 assay pairs drawn from 12 assays, so it uses a
+delete-one-assay jackknife. Resampling the pairs treats dependent values as
+independent: on simulated graphs with the same dependence structure that
+interval covers the truth 43% of the time at a nominal 95%, the jackknife
+96%.</li>
+<li><b>Rank statistics are tie-aware.</b> <code>argsort(argsort(x))</code> is a
+tie-breaking permutation, not a rank, and it scored a constant predictor at
++0.069 before this was centralised. Partial Spearman residualises the ranks and
+takes the Pearson correlation of the residuals.</li>
+<li><b>The permutation null exchanges whole positions</b> among positions of
+equal variant count, and the statistic is the maximum over layers on both sides
+so that searching {L} layers is charged to the null. With {nperm} permutations
+the smallest reportable value is 1/{nperm}, quoted as a bound rather than as an
+exact zero.</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>Metrics</h3>
+<p>The primary statistic is within-assay Spearman averaged over assays, the
+ProteinGym convention. It is the right choice for the comparisons this report
+makes, which are <em>paired on identical rows</em> &mdash; a monotone metric
+cannot favour one side of such a comparison by accident, and Spearman is
+invariant to the per-assay dynamic range that differs across DMS technologies.</p>
+<p>It is not sufficient on its own, so the frozen predictions are also scored by
+AUC and MCC against the ProteinGym <code>DMS_binarization_cutoff</code>, and by
+NDCG and recall over the predicted top 10%. Predictions are oriented once from
+the basis assays, never per assay; MCC thresholds predictions at their
+<i>n</i><sub>pos</sub>-th largest value so the predicted positive count matches
+the true one. The result of that check is reported with the held-out panel: the
+ordering is metric-invariant on the stability assays and is not on the four
+non-stability assays.</p>
+<p class=ci>Two limitations of the panel are worth stating rather than
+discovering. The basis panel is 100% one assay technology, which ProteinGym's own
+aggregation corrects for by grouping assays into function categories before
+averaging; no such correction is applied here because the panel is deliberately
+homogeneous. And this report does not benchmark against ProteinGym baselines
+&mdash; the comparisons are internal-versus-output and frozen-versus-chemistry on
+identical rows, not a leaderboard entry.</p>
+</div>
+
+<div class="card">
+<h3>Controls</h3>
+<p>Each claim carries the control that could have killed it: a chemistry
+baseline for &ldquo;the model knows more than the substitution&rdquo;; random
+directions of matched norm for &ldquo;this direction is special&rdquo;; a
+positive control on every ablation, measuring how much of the removed component
+survives, so that a null result is interpretable rather than ambiguous; a
+run-to-run repeat that gives the ceiling any cross-assay agreement must be read
+against; a negative control of principal angles between independently trained
+models; and a determinism check separating a real perturbation from a change of
+sampling key.</p>
+</div>
+
+<div class="card">
+<h3>Reproducibility</h3>
+<p>This page is generated by <code>build_svd_report.py</code> from the analysis
+JSONs; numbers in the prose are read from those files rather than transcribed.
+The builder copies every input it resolved into <code>data/</code> and records
+each one's SHA-256 in <code>data/manifest.json</code> together with the commit
+and the digests of the scripts that ran. A figure older than the JSON it is
+drawn from aborts the build. This machinery exists because it failed: the
+archived permutation run, the symmetry figure and one hardcoded p-value all
+disagreed with the prose at the August 2026 review, and all three came from the
+report being assembled with command-line flags recorded nowhere.</p>
+<p class=ci>Built {manifest['built']} at commit
+<code>{manifest['commit']}</code> from {len(manifest['inputs'])} inputs.
+Analysis runs on one H100 through a Singularity image; the SVD study is
+~7,700 batched decompositions plus the ridge grid over layer &times; penalty
+&times; component count &times; permutation, all batched in <code>jnp</code>.</p>
+</div>
+</section>"""
+
+
+def sec_heldout(HO):
+    if not HO:
+        return pending("Frozen basis on the sixteen held-out proteins")
+    SA, P, R = HO["summary_abs"], HO["paired"], HO["per_assay"]
+    wb = HO["pc2_within_basis"]
+    S12, N4 = "stability (12)", "non-stability (4)"
+    n_var = sum(r["n"] for r in R.values())
+
+    def s(key, grp):
+        return ci(SA[key][grp], "{:.3f}")
+
+    def pr(a_, b_, grp):
+        d = P[f"{a_} - {b_} | {grp}"]
+        return f"{ci(d)}, {d['wins']}/{d['n']}"
+
+    MT = HO.get("metrics_table", {})
+    MLAB = [("spearman", "Spearman |&rho;|"), ("auc", "AUC"), ("mcc", "MCC"),
+            ("ndcg_top10", "NDCG@10%"), ("recall_top10", "recall@10%")]
+    BLK = ["PC2 frozen", "chemistry frozen", "full dz frozen"]
+
+    def mtable(grp):
+        g = MT.get(grp, {})
+        if not g:
+            return ""
+        head = "".join(f"<th>{lab}</th>" for _, lab in MLAB)
+        body = ""
+        for b in BLK:
+            cells = "".join(
+                f"<td>{g[b][k]['mean']:.3f}</td>" if k in g.get(b, {})
+                else "<td>&mdash;</td>" for k, _ in MLAB)
+            body += f"<tr><td>{b}</td>{cells}</tr>"
+        verdict = ("the ordering is identical under all five"
+                   if g.get("_stable") else
+                   "<b>the ordering changes with the metric</b>")
+        return (f"<table><tr><th>{grp}</th>{head}</tr>{body}</table>"
+                f"<p class=ci>{verdict}.</p>")
+
+    envz = HO["length_matched"].get("ENVZ_ECOLI_Ghose_2023", {})
+    unmatched = [k.split("_")[0] for k, v in HO["length_matched"].items()
+                 if not v.get("neighbours")]
+    return f"""
+<section id=heldout>
+<h2>Does the direction work on proteins it never saw?</h2>
+<div class="card ok">
+<div class=row><span class="chip c-ok">result</span>
+<h3>{len(R)} proteins outside the basis, {n_var} variants, nothing refitted</h3></div>
+<p>Every transfer number above is leave-one-assay-out <em>inside</em> the twelve
+proteins that built the basis &mdash; all Tsuboyama proteolysis, all 40&ndash;72
+residues, all measuring the same thing. This applies the basis, frozen, to
+sixteen ProteinGym assays chosen afterwards: twelve more stability assays and
+four measuring something else entirely (ccdB toxicity by growth, EnvZ signalling
+by reporter, phototropin by fluorescence, HIV Tat by viral replication). No
+held-out label enters any fit and the sign is not re-chosen per protein.</p>
+<ul>
+<li><b>It transfers at full strength.</b> Frozen PC2 reaches
+<b>{s('pc2_transductive', S12)}</b> on the twelve unseen stability assays,
+against {abs(wb['mean']):.3f} inside the basis itself. Generalisation to new
+proteins costs nothing measurable.</li>
+<li><b>It needs nothing at all from the new protein.</b> Scaling the held-out
+channels with training statistics instead of their own changes the result by
+{pr('abs_pc2_transductive', 'abs_pc2_inductive', S12)} &mdash; an interval that
+includes zero. A new protein can be scored today, with one dot product.</li>
+<li><b>It is not chemistry.</b> A 17-descriptor chemistry model frozen the same
+way reaches {s('chem_frozen', S12)}; PC2 beats it by
+{pr('abs_pc2_transductive', 'abs_chem_frozen', S12)}.</li>
+<li><b>The direction is about severity, not only stability</b> &mdash; but
+weakly. On the four non-stability assays frozen PC2 reaches
+{s('pc2_transductive', N4)}, roughly half its stability value, and still beats
+frozen chemistry by {pr('abs_pc2_transductive', 'abs_chem_frozen', N4)}. So the
+signal is not confined to folding, and the honest description is a
+mutation-severity direction with a strong stability emphasis.</li>
+<li><b>A frozen scalar matches a probe fitted on each protein.</b> The ordinary
+within-assay probe &mdash; all 128 channels, ridge, position-grouped splits, run
+here on these same sixteen proteins so the comparison is not across two panels
+&mdash; reaches {s('dz_within', S12)}. Frozen PC2, one number with nothing
+fitted, differs from it by {pr('abs_pc2_transductive', 'abs_dz_within', S12)}:
+indistinguishable.</li>
+</ul>
+<p class=ci>The full 128 channels frozen the same way reach
+{s('dz_frozen', S12)}, ahead of PC2 by
+{pr('abs_dz_frozen', 'abs_pc2_transductive', S12)} and ahead of the within-assay
+probe on identical rows by
+{pr('abs_dz_frozen', 'abs_dz_within', S12)}. Pooling twelve proteins builds a
+better predictor than fitting each protein on its own, which is the transfer
+claim in its strongest form. On the four non-stability assays none of these
+separations survives &mdash; frozen against within-assay is
+{pr('abs_dz_frozen', 'abs_dz_within', N4)}.</p>
+</div>
+
+<div class="card amber">
+<div class=row><span class="chip c-amber">caveat</span>
+<h3>PC2 is not special on the four</h3></div>
+<p>Twenty random unit directions in the same 128-dimensional space were scored
+the same way. The best of the twenty reaches {s('random_absmax', S12)} on the
+stability assays &mdash; PC2 still beats it by
+{pr('abs_pc2_transductive', 'random_absmax', S12)}. On the four non-stability
+assays it does not: {pr('abs_pc2_transductive', 'random_absmax', N4)}, an
+interval straddling zero.</p>
+<p>PC2 beats the <em>average</em> random direction everywhere
+({pr('abs_pc2_transductive', 'random_absmean', N4)} on the four), so the
+non-stability signal is real. But on a non-folding phenotype the specific
+direction the SVD found is not distinguishable from the luckiest of twenty
+arbitrary ones. The severity information is spread widely enough through the
+pair channels that a random projection captures much of it, which is consistent
+with the depth and ablation results and is an argument against calling PC2 a
+privileged axis.</p>
+</div>
+
+<div class="card ok">
+<div class=row><span class="chip c-ok">control</span>
+<h3>Is any of this an artifact of reporting Spearman?</h3></div>
+<p>Every number in this report is a within-assay Spearman averaged over assays,
+which is the ProteinGym convention. Spearman weights the whole ranking equally,
+which is not what either audience wants: a variant-effect reader wants
+deleterious-versus-tolerated, and a protein engineer only reads the top of the
+list. So the same frozen predictions are scored four more ways &mdash; AUC and
+MCC against the <code>DMS_binarization_cutoff</code> from the ProteinGym
+reference table, and NDCG and recall over the predicted top 10%.</p>
+{mtable("stability (12)")}
+{mtable("non-stability (4)")}
+<p>On the twelve stability assays nothing moves: full &Delta;z &gt; PC2 &gt;
+chemistry under all five metrics, so on that panel &ldquo;we report
+Spearman&rdquo; is a presentation choice and the conclusions do not depend on
+it.</p>
+<p><b>On the four non-stability assays the conclusion is metric-dependent, and
+Spearman is the flattering choice.</b> PC2 leads chemistry on Spearman, AUC and
+MCC, but chemistry leads on both top-focused metrics &mdash; NDCG@10% 0.753
+against 0.729, and recall@10% 0.160 against 0.090. Frozen PC2 recovers 9% of the
+true top decile there, which is <em>below</em> the 10% a random selection would
+give. It orders the bulk of a non-stability assay better than chemistry does and
+is useless at finding that assay's best variants.</p>
+<p class=ci>This does not touch the internal-versus-output comparison, which is
+paired on identical rows where a monotone metric cannot favour one side by
+accident. It bears on the transfer claim: any statement about the four
+non-stability assays should name the metric, and none of them should be
+presented as variant prioritisation.</p>
+</div>
+
+<div class="card ok">
+<div class=row><span class="chip c-ok">control</span>
+<h3>The phenotype gap is not a length gap</h3></div>
+<p>The obvious objection is that the four are also the long ones &mdash; 60 to
+118 residues against the stability panel's 40 to 72 &mdash; and |&rho;| does
+fall with chain length across the sixteen at
+{HO['confounds']['chain length']['all16']:+.3f}. So the two contrasts are partly
+the same contrast, and it is checked rather than argued.</p>
+<p>Only ENVZ can be length-matched, and it is the decisive case: at
+{envz.get('n_res', 0)} residues it sits inside the stability panel's range and
+still falls <b>{envz.get('gap', float('nan')):+.3f}</b> below the
+{len(envz.get('neighbours', []))} stability assays within ten residues of it.
+The reverse also holds &mdash; the longest assay in the panel, PHOT at 118
+residues, outscores ENVZ at 60. Length is not what separates the groups.</p>
+<p class=ci>{', '.join(unmatched)} have no stability assay within ten residues,
+so their gaps remain confounded with length and are not used for this argument.
+Within the twelve stability assays alone the length association is
+{HO['confounds']['chain length']['stability_only']:+.3f}, so a mild length
+effect exists and is not being denied &mdash; it is simply too small to produce
+the observed separation.</p>
+</div>
+</section>"""
+
+
+def node_interval(sa):
+    """Interval for the pairwise agreement, resampling ASSAYS not pairs.
+
+    Recomputed here from `pairs_last8` rather than trusted from the JSON so
+    that archives written before `analyze_svd.py` was fixed render the correct
+    interval without a GPU re-run. Both paths call the same pi_stats function,
+    so they cannot disagree.
+    """
+    pt, lo, hi, n_nodes, se = pi_stats.pairwise_node_jackknife(sa["pairs_last8"])
+    return {"mean": pt, "ci_lo": lo, "ci_hi": hi, "se": se, "n_nodes": n_nodes}
+
+
 def sec_shared(S):
     if not S:
         return ""
     sa = S["subspace_agreement"]
+    nodes = node_interval(sa)
     rp = S.get("replicate_stability", {}).get("pooled")
     rep_txt = ""
     if rp:
@@ -152,9 +722,16 @@ assay's top-{sa['k']} subspace &mdash; rotation-invariant, and it never asks two
 individual components to correspond, which they cannot be made to do since
 singular-vector signs are arbitrary and near-degenerate components rotate
 freely.</p>
-<p>Pooled over the last eight layers: <b>{ci(sa['last8_pooled'], '{:.3f}')}</b>
+<p>Pooled over the last eight layers: <b>{ci(nodes, '{:.3f}')}</b>
 against a chance level of {sa['chance']:.3f} for random {sa['k']}-dimensional
 subspaces.</p>
+<p class=ci>The interval resamples the {nodes['n_nodes']} <em>assays</em>, not the
+{len(sa['pairs_last8'])} pairs &mdash; delete-one-assay jackknife, standard error
+{nodes['se']:.4f}. Each assay appears in {nodes['n_nodes'] - 1} pairs, so treating
+the pairs as independent understates the width about {(nodes['n_nodes'] - 1) ** 0.5:.1f}-fold:
+on simulated graphs with this dependence structure the pair-level interval covers
+the truth 43% of the time at a nominal 95%, and the jackknife covers 96%. An
+earlier version of this page quoted the pair-level interval.</p>
 {rep_txt}
 <p>Per-dimension standardisation is deliberately <em>not</em> applied for this
 comparison. Rescaling each channel by its within-assay spread would rotate every
@@ -1147,7 +1724,10 @@ never across columns.</p>
 </section>"""
 
 
-A_SVD = str(W / "runs/svd_dz_v2.json")
+# The current runs. These were svd_dz_v2 and symmetry_v2 long after v3 of each
+# existed, so the published build depended on flags typed at a shell -- which is
+# how the archived data came to disagree with the prose.
+A_SVD = str(W / "runs/svd_dz_v3.json")
 
 
 def main():
@@ -1157,7 +1737,7 @@ def main():
     ap.add_argument("--drift", default=str(W / "runs/drift_v1.json"))
     ap.add_argument("--transfer", default=str(W / "runs/transfer_v1.json"))
     ap.add_argument("--pc2", default=str(W / "runs/pc2_v2.json"))
-    ap.add_argument("--symmetry", default=str(W / "runs/symmetry_v2.json"))
+    ap.add_argument("--symmetry", default=str(W / "runs/symmetry_v3.json"))
     ap.add_argument("--steer", default=str(W / "runs/steer_RCRO_v4.json"))
     ap.add_argument("--chem", default=str(W / "runs/chem_v1.json"))
     ap.add_argument("--ablate", default=str(W / "runs/ablate_v1.json"))
@@ -1167,14 +1747,30 @@ def main():
     ap.add_argument("--scrutiny", default=str(W / "runs/scrutiny_v2.json"))
     ap.add_argument("--attrib", default=str(W / "runs/attrib_v1.json"))
     ap.add_argument("--bw", default=str(W / "runs/bw_v1.json"))
+    ap.add_argument("--heldout", default=str(W / "runs/heldout_v1.json"))
+    ap.add_argument("--allow-stale-figures", action="store_true",
+                    help="render even if a figure predates its source JSON")
     a = ap.parse_args()
+
+    resolved = {k: v for k, v in vars(a).items()
+                if k != "allow_stale_figures" and isinstance(v, str)}
+    stale = check_figures(resolved, a.allow_stale_figures)
+    manifest = archive_inputs(resolved, stale)
 
     S, DS, Dj, TR = (load(a.svd), load(a.svd_ds), load(a.drift), load(a.transfer))
     Q, Y, T = load(a.pc2), load(a.symmetry), load(a.steer)
     C, AB, X, DP = (load(a.chem), load(a.ablate), load(a.xmodel), load(a.depth))
     SC, SR, AT = load(a.scope), load(a.scrutiny), load(a.attrib)
-    BW = load(a.bw)
+    BW, HO = load(a.bw), load(a.heldout)
     css = (OUT / "style.css").read_text()
+    inputs_txt = " &middot; ".join(
+        f"{k}: <code>{v['file']}</code> ({v['sha256'][:10]})"
+        for k, v in sorted(manifest["inputs"].items()))
+    drifted = manifest["code_drifted_from_repo"]
+    drift_txt = ("" if not drifted else
+                 f" <b>Note:</b> the executing harness copy differs from the "
+                 f"repo at this commit for {', '.join(drifted)}, so this build "
+                 f"is not reproducible from the commit alone.")
     html = f"""<!doctype html>
 <html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -1221,6 +1817,16 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 {sec_shared(S)}
 {sec_what(S)}
 {sec_transfer(S, TR)}
+
+<figure>
+  <img src="figures/heldout.png" alt="Three panels: per-assay frozen-PC2 correlation for
+  sixteen held-out proteins against a frozen chemistry baseline; block summaries split by
+  phenotype group; and correlation against chain length showing the length confound.">
+  <figcaption>The frozen basis on sixteen proteins outside it.
+  <code>fig_heldout.py</code> from <code>heldout_v1.json</code>.</figcaption>
+</figure>
+
+{sec_heldout(HO)}
 
 <figure>
   <img src="figures/chem.png" alt="Feature blocks, paired increments, and PC2 alone
@@ -1278,6 +1884,7 @@ figcaption{{font-size:.86rem;color:var(--muted);margin-top:.5rem}}
 
 {sec_steer(T)}
 {sec_ablate(AB)}
+{sec_methods_full(S, HO, manifest)}
 
 <section id=limits>
 <h2>What this does not establish</h2>
@@ -1351,11 +1958,12 @@ key.</li>
 
 <footer>
   <p>Generated by <code>build_svd_report.py</code> from the analysis JSONs; numbers are
-  read from the runs, not transcribed. Code: <code>analyze_svd.py</code>,
-  <code>analyze_drift.py</code>, <code>fig_svd.py</code>, <code>fig_drift.py</code>,
-  <code>analysis.sbatch</code>. Archives: <code>runs/svd_dz_v2.*</code>,
-  <code>runs/svd_ds_v1.json</code>, <code>runs/drift_v1.json</code>,
-  <code>runs/transfer_v1.json</code>.</p>
+  read from the runs, not transcribed. Built {manifest['built']} at commit
+  <code>{manifest['commit']}</code> from {len(manifest['inputs'])} inputs, every one
+  of which this script copied into <code>data/</code> itself and listed with its
+  SHA-256 in <code>data/manifest.json</code>. Figures are checked against the mtime
+  of their source JSON and the build aborts if one is older.{drift_txt}</p>
+  <p class=ci>{inputs_txt}</p>
 </footer>
 </div></body></html>
 """

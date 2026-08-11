@@ -110,6 +110,15 @@ def main():
                 [d["kl_glob"], d["kl_site"],
                  np.linalg.norm(d["dz_site"], axis=-1),
                  np.linalg.norm(d["ds_site"], axis=-1)], axis=1),
+            # The 128 pair channels at the final layer -- the DIRECTION, not
+            # just how far the row moved. `internal` above feeds dz_site in as
+            # a per-layer norm, which is a defensible shared feature space but
+            # discards exactly the quantity this project is about, and it is
+            # why the transferred internal number came out well below the
+            # within-assay figures reported elsewhere. The channels mean the
+            # same thing in every protein (that is the shared-subspace result),
+            # so pooling them across assays is well defined.
+            "internal_vec": np.asarray(d["dz_site"], float)[:, -1, :],
             "chemistry": pi_chem.chem_matrix([str(m) for m in d["mutant"]]),
             "output_rich": output_matrix(
                 ca, ca_wt, tm, d["plddt"], d["plddt_site"], d["pos"]),
@@ -124,7 +133,7 @@ def main():
     if len(dims) > 1:
         raise SystemExit(f"feature dimensions differ across assays: {dims}")
 
-    BLOCKS = ["internal", "chemistry", "output_rich"]
+    BLOCKS = ["internal", "internal_vec", "chemistry", "output_rich"]
     res = {b: {} for b in BLOCKS}
     res["TM_to_WT"] = {}
     res["internal_within"] = {}
@@ -160,8 +169,10 @@ def main():
                                           A[held]["y"][te]))
         res["internal_within"][held] = float(np.nanmean(vals))
 
-    ORDER = ["internal_within", "internal", "chemistry", "output_rich", "TM_to_WT"]
+    ORDER = ["internal_within", "internal", "internal_vec", "chemistry",
+             "output_rich", "TM_to_WT"]
     LAB = {"internal_within": "internal (within-assay)",
+           "internal_vec": "internal 128-dim TRANSFERRED",
            "internal": "internal TRANSFERRED", "chemistry": "chemistry TRANSFERRED",
            "output_rich": "output-rich TRANSFERRED", "TM_to_WT": "TM to WT"}
     print(f"\nLeave-one-assay-out: trained on 11 assays, tested on the 12th\n")
@@ -187,6 +198,9 @@ def main():
     gaps = {}
     for lab, ka, kb in (("transferred internal - TM", "internal", "TM_to_WT"),
                         ("transferred internal - output-rich", "internal", "output_rich"),
+                        ("internal 128-dim - output-rich", "internal_vec", "output_rich"),
+                        ("internal 128-dim - chemistry", "internal_vec", "chemistry"),
+                        ("internal 128-dim - internal norms", "internal_vec", "internal"),
                         ("transferred internal - chemistry", "internal", "chemistry"),
                         ("within-assay - transferred", "internal_within", "internal")):
         pt, lo, hi, nk = pi_stats.paired_cluster_bootstrap(
