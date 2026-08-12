@@ -71,6 +71,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_metrics  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import grouped_split  # noqa: E402
@@ -466,7 +467,7 @@ def main():
            "paired": pairs,
            "confounds": conf, "length_matched": matched,
            "metrics_table": metric_tab}
-    Path(a.out).write_text(json.dumps(out, indent=1, default=float))
+    pi_archive.write_result(a.out, out, protocol=out.pop("protocol"), indent=1)
     print(f"\nwrote {a.out}")
 
 

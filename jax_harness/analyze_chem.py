@@ -50,6 +50,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
@@ -215,7 +216,7 @@ def main():
         {n: [loao[n]] for n in names}, n_boot=10000, seed=0, hierarchical=False)
     print(f"\n   pooled {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
-    Path(a.out).write_text(json.dumps(
+    _res = (
         {"protocol": pi_protocol.protocol(
              script="analyze_chem.py",
              design="leave-one-assay-out for pc2_alone_loao; nested/incremental "
@@ -237,7 +238,8 @@ def main():
              "component_vs_dms": {f"rPC{c+1}": {
                  "per_assay": {n: ann[n][c] for n in names}} for c in range(N_PC)}},
          "pc2_alone_loao": {"per_assay": loao, "mean": pt, "ci_lo": lo,
-                            "ci_hi": hi}}, indent=2, default=float))
+                            "ci_hi": hi}})
+    pi_archive.write_result(a.out, _res, protocol=_res.pop("protocol"))
     print(f"\nwrote {a.out}")
 
 

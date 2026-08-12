@@ -79,6 +79,7 @@ import jax.numpy as jnp  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import grouped_split  # noqa: E402
@@ -651,7 +652,7 @@ def main():
     print("   the two are not the same feature space.")
     res["loao_shared_basis"] = {"layers": "last 8", "ks": LK, "results": lo_sum}
 
-    Path(a.out).write_text(json.dumps(res, indent=2, default=float))
+    pi_archive.write_result(a.out, res, protocol=res.pop("protocol"), indent=2)
     print(f"\nwrote {a.out}")
     if a.npz:
         np.savez_compressed(a.npz, assays=np.array(names), ks=np.array(ks), **store)

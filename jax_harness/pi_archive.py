@@ -61,6 +61,14 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+# Jobs execute from prot_interp_files/harness/, a plain COPY of this directory
+# and not a git checkout, so git commands run there return nothing. The first
+# batch of archives written through this module recorded git_commit: null for
+# exactly that reason -- a silent None, which is the failure this module exists
+# to stop. The repo is located explicitly, and `mirrored` records whether the
+# code that ran was the checkout or a copy of it.
+REPO = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/"
+            "protein_interpretability")
 PROTOCOL_KEY = "protocol"
 PROVENANCE_KEY = "provenance"
 RECONSTRUCTED_KEY = "provenance_reconstructed"
@@ -68,9 +76,26 @@ NPZ_META_KEY = "_pi_meta"
 
 
 # ---- facts about the run --------------------------------------------------
+def _git_root():
+    """The checkout, whether or not this file is running from inside it."""
+    for cand in (HERE, REPO):
+        try:
+            r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                               cwd=str(cand), capture_output=True, text=True,
+                               timeout=15)
+            if r.returncode == 0 and r.stdout.strip():
+                return Path(r.stdout.strip())
+        except Exception:
+            pass
+    return None
+
+
 def _git(*args, cwd=None):
+    root = cwd or _git_root()
+    if root is None:
+        return None
     try:
-        return subprocess.run(["git", *args], cwd=str(cwd or HERE),
+        return subprocess.run(["git", *args], cwd=str(root),
                               capture_output=True, text=True,
                               timeout=15).stdout.strip() or None
     except Exception:
@@ -92,6 +117,8 @@ def run_provenance():
         "git_commit": _git("rev-parse", "HEAD"),
         "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
         "git_dirty": bool(dirty) if dirty is not None else None,
+        "git_root": str(_git_root() or ""),
+        "mirrored": not str(HERE).startswith(str(REPO)),
         "host": socket.gethostname(),
         "slurm_job": os.environ.get("SLURM_JOB_ID"),
     }

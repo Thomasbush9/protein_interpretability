@@ -45,6 +45,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
@@ -152,7 +153,7 @@ def main():
         source=f"{a.dir}/xm_<model>_{a.run}_<assay>.npz", n_assays=len(assays),
         note="TM omitted: tmtools is not installed and substituting another "
              "metric under that name would fabricate a number")
-    Path(a.out).write_text(json.dumps(out, indent=2, default=float))
+    pi_archive.write_result(a.out, out, protocol=out.pop("protocol"), indent=2)
     print(f"\nwrote {a.out}")
 
 

@@ -41,6 +41,7 @@ import numpy as np
 import sys
 from pathlib import Path as _P
 sys.path.insert(0, str(_P(__file__).parent))
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 
 
@@ -89,7 +90,7 @@ def main():
           f"{m_final[i128]:.3f}. Any comparison against a\n  final-layer number "
           f"should use the latter.")
 
-    Path(a.out).write_text(json.dumps({
+    _res = {
         "protocol": pi_protocol.protocol(
             script="analyze_layer_match.py",
             design="within-assay, position-grouped splits (re-reduced from "
@@ -107,7 +108,8 @@ def main():
         "last_window": {str(k): float(m_window[i]) for i, k in enumerate(ks)},
         "final_layer_per_assay": {str(k): final[:, i].tolist()
                                   for i, k in enumerate(ks)},
-    }, indent=2, default=float))
+    }
+    pi_archive.write_result(a.out, _res, protocol=_res.pop("protocol"))
     print(f"\nwrote {a.out}")
 
 

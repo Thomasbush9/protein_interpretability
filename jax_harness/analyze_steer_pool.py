@@ -49,6 +49,7 @@ import numpy as np
 import sys as _s
 from pathlib import Path as _P
 _s.path.insert(0, str(_P(__file__).parent))
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 
 EPS = 1e-12
@@ -177,7 +178,7 @@ def main():
         statistic="odd component [f(+a)-f(-a)]/2a, ranked by |odd|",
         test="exact binomial, rank-first against 1/(n_random+1); NOT a sign "
              "test, whose 0.5 null would be wrong here")
-    Path(a.out).write_text(json.dumps(out, indent=2, default=float))
+    pi_archive.write_result(a.out, out, protocol=out.pop("protocol"), indent=2)
     print(f"\nwrote {a.out}")
 
 

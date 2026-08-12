@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import geom  # noqa: E402
 import pi_chem  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
 import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import (grouped_split, output_matrix,  # noqa: E402
@@ -295,7 +296,7 @@ def main():
         print(f"  {lab:36s} {pt:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]  "
               f"{wins}/{len(names)} assays{flag}")
 
-    Path(a.out).write_text(json.dumps(
+    _res = (
         {"k_sweep": sweep, "protocol": {**pi_protocol.protocol(
              script="analyze_transfer.py",
              design="leave-one-assay-out (train on 11 assays, test on the 12th)",
@@ -319,7 +320,8 @@ def main():
                       "n_assays": len(names)},
          "normalisation_mode": "inductive (training-assay statistics)"
              if a.inductive else "transductive (each assay's own statistics)",
-         "predictors": summary, "gaps": gaps}, indent=2))
+         "predictors": summary, "gaps": gaps})
+    pi_archive.write_result(a.out, _res, protocol=_res.pop("protocol"))
     print(f"\nwrote {a.out}")
 
 
