@@ -62,6 +62,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_basis  # noqa: E402
 import pi_conf  # noqa: E402
 import pi_stats  # noqa: E402
 
@@ -126,25 +127,17 @@ def main():
     print()
 
     # ---- shared basis at the last layer, oriented -------------------------
-    def zc(M):
-        return (M - M.mean(0)) / (M.std(0) + EPS)
-
-    Xg = np.concatenate([zc(np.asarray(A[n]["d"]["dz_site"])[:, -1, :]) for n in A], 0)
-    gm = Xg.mean(0)
-    _, _, Vt = np.linalg.svd(Xg - gm, full_matrices=False)
-    V = Vt[:N_PC]
+    # pi_basis, not a local rebuild. This script writes pc2_v2.npz, so what it
+    # constructs here IS the basis every other analysis inherits; it was one of
+    # eight independent reconstructions of it. Verified against the previous
+    # code bit-for-bit by pi_basis_test.py.
+    blocks = {n: np.asarray(A[n]["d"]["dz_site"])[:, -1, :] for n in A}
+    kl = {n: np.asarray(A[n]["d"]["kl_glob"])[:, -1] for n in A}
+    B = pi_basis.fit(blocks, layer=-1, orient_on="kl_glob", orient_ref=kl,
+                     orient_k=N_PC, n_pc=N_PC, eps=EPS)
     for n in A:
-        A[n]["P"] = (zc(np.asarray(A[n]["d"]["dz_site"])[:, -1, :]) - gm) @ V.T
-
-    orient = []
-    for c in range(N_PC):
-        g = {n: [pi_stats.spearman(A[n]["P"][:, c], A[n]["d"]["kl_glob"][:, -1])]
-             for n in A}
-        s = 1.0 if pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
-                                              hierarchical=False)[0] >= 0 else -1.0
-        orient.append(s)
-        for n in A:
-            A[n]["P"][:, c] *= s
+        A[n]["P"] = B.project(blocks[n], layer=-1)
+    V, orient = B.V, [float(s) for s in B.orient]
     print(f"Component orientation (so that rho with kl_glob >= 0): {orient}\n")
 
     # ---- per-pair change, and its distance from the mutated residue -------
@@ -242,7 +235,7 @@ def main():
     print("   mutated residue; = 1 means no spatial preference at all.\n")
 
     out = {"protocol": {"orientation": orient, "bins": BINS.tolist(),
-                        "n_pc": N_PC, "assays": sorted(A)},
+                        "n_pc": N_PC, "assays": sorted(A), **B.protocol},
            "per_assay": per_assay}
 
     for lab, key in ([("localisation radius ratio", "radius_ratio_mean"),

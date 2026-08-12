@@ -154,6 +154,21 @@ def tier_properties():
     except ValueError:
         check("kl_glob orientation refuses a restricted fit", True)
 
+    # The archives store dz_site as float32, and analyze_pc2 fed it to numpy
+    # without a cast -- so the pc2_v2.npz basis every other analysis inherits
+    # was computed in SINGLE PRECISION (orthonormality 1.06e-08 against
+    # 3.11e-15 here). analyze_heldout casts and did not have the problem, which
+    # is the same file being two different objects again. pi_basis always
+    # promotes, and this asserts it: the equivalence tier alone cannot, because
+    # it loads float64 for the legacy reference too.
+    b32 = pi_basis.fit({k: v.astype(np.float32) for k, v in blocks.items()},
+                       layer=-1, orient_ref=ref, orient_k=2)
+    G32 = b32.components @ b32.components.T
+    check("a float32 input still yields a float64 basis",
+          b32.components.dtype == np.float64
+          and float(np.abs(G32 - np.eye(D)).max()) < 1e-12,
+          f"max|VV^T - I| = {float(np.abs(G32 - np.eye(D)).max()):.3e}")
+
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "b.npz"
