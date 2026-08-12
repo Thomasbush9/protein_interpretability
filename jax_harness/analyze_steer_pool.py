@@ -46,6 +46,11 @@ from pathlib import Path
 
 import numpy as np
 
+import sys as _s
+from pathlib import Path as _P
+_s.path.insert(0, str(_P(__file__).parent))
+import pi_protocol  # noqa: E402
+
 EPS = 1e-12
 METRICS = [("d_sd_site", "distogram width at the injected site"),
            ("d_plddt_site", "pLDDT at the injected site")]
@@ -162,6 +167,16 @@ def main():
             "p_sign_pc1": binom_tail(k1, n, p_first)}
         out["assays"] = [r["assay"] for r in rows]
 
+    out["protocol"] = pi_protocol.protocol(
+        script="analyze_steer_pool.py",
+        design="intervention: PC2 injected into the FINAL z, ranked against "
+               "8 random directions drawn inside each protein",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("PC2 direction, raw z units", 128, kept=1),
+        source=a.glob, n_assays=len(out.get("assays", [])),
+        statistic="odd component [f(+a)-f(-a)]/2a, ranked by |odd|",
+        test="exact binomial, rank-first against 1/(n_random+1); NOT a sign "
+             "test, whose 0.5 null would be wrong here")
     Path(a.out).write_text(json.dumps(out, indent=2, default=float))
     print(f"\nwrote {a.out}")
 

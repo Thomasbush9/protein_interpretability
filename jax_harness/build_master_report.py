@@ -36,13 +36,24 @@ FIGSPEC = {
 CODE = ["build_master_report.py", "pi_report.py", "fig_headline.py",
         "fig_causal.py", "analyze_transfer.py", "analyze_steer_pool.py",
         "compare_internal_output.py", "analyze_pc2.py", "analyze_chem.py",
-        "analyze_xmodel_io.py", "fig_xmodel_io.py"]
+        "analyze_xmodel_io.py", "fig_xmodel_io.py", "analyze_layer_match.py", "pi_protocol.py"]
 
 # Reused unchanged from report_svd; copied in by the builder so this page is
 # self-contained and its figure cannot drift from the one that was reviewed.
-BORROWED = {"svd.png": "what the components are",
-            "heldout.png": "held-out proteins",
-            "depth.png": "depth across three models"}
+#
+# These were a blind spot. `shutil.copy2` preserves mtimes, and they were not in
+# FIGSPEC, so the staleness guard never tested them -- when svd_dz_v3.json and
+# heldout_v1.json were regenerated their figures silently went stale and the
+# manifest still reported none. Each now names the input it is drawn from and
+# the command that rebuilds it, and is checked exactly like a local figure.
+BORROWED = {
+    "svd.png": ("svd", "python fig_svd.py --svd {svd} --svd-ds {svd_ds} "
+                       "--out " + str(R.W / "report_svd/figures/svd.png")),
+    "heldout.png": ("heldout", "python fig_heldout.py --heldout {heldout} "
+                               "--out " + str(R.W / "report_svd/figures/heldout.png")),
+    "depth.png": ("depth", "python fig_depth.py --depth {depth} "
+                           "--out " + str(R.W / "report_svd/figures/depth.png")),
+}
 
 
 def sec_lede(TR, HO, ST, SV):
@@ -94,7 +105,7 @@ stability axis, passes in only {st['pc1_beats']} of {st['n_assays']}.</p>
 </section>"""
 
 
-def sec_numbers(TR, SV, CH, HO):
+def sec_numbers(TR, SV, CH, HO, LM):
     """Reconcile the several 'internal' numbers this project reports.
 
     Two earlier drafts got this wrong in the same way. The transfer analysis fed
@@ -103,7 +114,7 @@ def sec_numbers(TR, SV, CH, HO):
     fix was to give the transfer probe the 128 channels; the numbers now agree
     and this section exists to show that they do.
     """
-    if not (TR and SV and CH and HO):
+    if not (TR and SV and CH and HO and LM):
         return R.pending("reconciling the numbers")
     var = SV["centered"]["curves"]["components, variance-ordered"]["128"]
     lo2 = SV["loao_shared_basis"]["results"]["2"]
@@ -118,9 +129,12 @@ def sec_numbers(TR, SV, CH, HO):
         return f"{abs(d['mean']):.3f} <span class=ci>[{lo:.3f}, {hi:.3f}]</span>"
 
     rows = [
-        ["128 pair channels, final layer", "leave-one-assay-out",
+        ["all 128 pair channels, final layer", "leave-one-assay-out",
          ci(P["internal_vec"])],
-        ["all 128 directions, every layer", "within protein, by position",
+        ["all 128 directions, final layer", "within protein, by position",
+         f"{LM['final_layer']['128']:.3f}"],
+        ["all 128 directions, mean of last "
+         f"{LM['layer_window']} layers", "within protein, by position",
          ci(var)],
         ["top 2 components of the shared basis", "leave-one-assay-out", ci(lo2)],
         ["PC2 alone", "separate held-out protein set", ci(ho)],
@@ -136,12 +150,47 @@ def sec_numbers(TR, SV, CH, HO):
 <p>Several "internal" figures appear in this project. They now agree, and the
 table says which measurement each one is.</p>
 {R.table(["features", "design", "Spearman"], rows)}
-<p>Everything that carries the DIRECTION lands between
-{min(abs(x['mean']) for x in (P['internal_vec'], var, lo2, ho, pa)):.2f} and
-{max(abs(x['mean']) for x in (P['internal_vec'], var, lo2, ho, pa)):.2f},
-whether the split is within a protein or across proteins, and whether the
-representation is given whole or compressed to two components. The spread is
-protocol, not disagreement.</p>
+<p>Two conventions separate the top three rows, and neither is a disagreement
+about the model.</p>
+<ul>
+<li><strong>Layer window.</strong> The plotted SVD curve pools the last
+{LM['layer_window']} layers rather than reading one, deliberately, so that no
+single layer is chosen by held-out performance. At all 128 dimensions that
+averaging is worth {LM['last_window']['128'] - LM['final_layer']['128']:+.3f}
+({LM['final_layer']['128']:.3f} at the final layer alone against
+{LM['last_window']['128']:.3f} pooled). Comparisons against a final-layer number
+should use {LM['final_layer']['128']:.3f}.</li>
+<li><strong>Training set size.</strong> At the matched setting &mdash; all 128
+dimensions, final layer &mdash; leave-one-assay-out reaches
+{P['internal_vec']['mean']:.3f} against {LM['final_layer']['128']:.3f}
+within-protein. Training across eleven proteins uses roughly
+{11 * 250:,} rows; a within-protein split uses about a fifteenth of that. The
+across-protein design does not cost accuracy here, it buys it.</li>
+</ul>
+<div class="card ok">
+<div class=row><span class="chip c-ok">why a full PCA cannot beat the raw channels</span>
+<strong>At full rank they are the same fit</strong></div>
+<p>A question this table invites: if the components are the "better" basis, why
+does the complete PCA score below the raw pair representation? It does not, and
+it cannot. A rank-128 rotation of 128 channels is invertible, so a linear probe
+has exactly the same function class in either basis; the fit is identical, not
+merely similar. Two independent checks confirm it &mdash; the archived SVD
+analysis reports the two agreeing to
+{SV['protocol']['spearman_delta']:.1e}, and the leave-one-assay-out sweep in
+panel B of the figure has them meeting at
+{abs(TR['k_sweep']['128']['rotated']['mean'] - TR['k_sweep']['128']['channels']['mean']):.4f}.</p>
+<p>Rotation helps only under TRUNCATION, by packing the signal into fewer
+directions: at one dimension it is worth
+{TR['k_sweep']['1']['rotated']['mean'] - TR['k_sweep']['1']['channels']['mean']:+.3f},
+at sixteen
+{TR['k_sweep']['16']['rotated']['mean'] - TR['k_sweep']['16']['channels']['mean']:+.3f},
+and at full rank exactly nothing. Any apparent gap between a "complete PCA"
+number and a "full representation" number is therefore a difference of protocol
+&mdash; layer window or training-set size &mdash; never of information.</p>
+</div>
+<p>Everything that carries the direction, once those two conventions are held
+fixed, lands between {min(LM['final_layer']['128'], abs(pa['mean'])):.2f} and
+{max(P['internal_vec']['mean'], abs(ho['mean'])):.2f}.</p>
 <div class="card warn">
 <div class=row><span class="chip c-warn">corrected</span>
 <strong>Two earlier drafts led with a handicapped probe</strong></div>
@@ -167,7 +216,7 @@ def sec_headline(TR, BW, stale, TI):
     rows = [[lab, f"{P[k]['mean']:+.3f}",
              f"[{P[k]['ci_lo']:+.3f}, {P[k]['ci_hi']:+.3f}]"]
             for k, lab in [
-                ("internal_vec", "internal, 128 pair channels (transferred)"),
+                ("internal_vec", "internal, all 128 pair channels (transferred)"),
                 ("internal", "internal, per-layer magnitudes (transferred)"),
                 ("internal_within", "internal magnitudes, within the same protein"),
                 ("chemistry", "substitution chemistry"),
@@ -201,12 +250,37 @@ with per-protein points; the same comparison paired within protein showing
 internal winning in all twelve; and the between-position versus within-position
 decomposition.">
 <figcaption>Leave-one-assay-out throughout. Each predictor is trained on eleven
-proteins and scored on the twelfth.</figcaption></figure>
+proteins and scored on the twelfth. Panel B answers "why this many channels" by
+showing the whole truncation curve; channels are ranked by absolute Spearman
+against the target on the training proteins only, so the selection never sees
+the protein it is scored on.</figcaption></figure>
 
 <h3>The protocol, and why it is the fair comparison</h3>
-<p>{pr['n_assays']} stability assays, {pr['design']}, ridge with k =
-{pr['k']} and &lambda; = {pr['lam']}, features and target
-{pr['normalisation']}. Both normalisations are load-bearing: feature scale
+<p>{pr['n_assays']} stability assays, {pr['design']}, ridge with &lambda; =
+{pr['lam']}, features and target {pr['normalisation']}. The feature cap is k = {pr['k']},
+at or above every block's own width, so none of the transferred predictors is
+truncated: 128 pair channels, 256 per-layer magnitudes, 17 chemistry features,
+10 emitted-structure features.</p>
+<div class="card warn">
+<div class=row><span class="chip c-warn">corrected twice</span>
+<strong>The cap was wrong, then still wrong</strong></div>
+<p>An earlier build capped every block at k = 16. That left chemistry (17
+features) and the emitted structure (10) essentially intact while discarding 112
+of the internal side's 128 channels and 240 of the magnitude block's 256 &mdash;
+matching the <em>number</em> of features when the widths differ by an order of
+magnitude, which is the opposite of matching. Raising it to 128 fixed the
+128-channel block but left the 256-wide magnitude block still halved, while the
+page claimed nothing was truncated. At k = {pr['k']} that claim is finally
+true.</p>
+<p>The 128-channel headline is unaffected either way &mdash; 128 was already its
+full width, so it reads {P['internal_vec']['mean']:.3f} at both caps. What moved
+is the magnitude block, from 0.573 at k=16 to
+{P['internal']['mean']:.3f} now.</p>
+</div>
+<p>One row is deliberately not untruncated. The within-protein reference fits on
+roughly 190 rows, so {pr['k']} features over-parameterise it; it is a reference
+scale, not a claim, and it falls to {P['internal_within']['mean']:.3f} as a
+result. Both normalisations are load-bearing: feature scale
 depends on chain length and on the model's representation scale for that fold,
 and target dynamic range varies the same way, so without them the ridge would
 spend its capacity learning which protein a row came from.</p>
@@ -676,6 +750,69 @@ still one summary of a large tensor.</li>
 </section>"""
 
 
+def sec_ledger(resolved):
+    """One table: what protocol produced each number on this page.
+
+    Every correction in section 2 traced to the same root cause -- a number
+    whose protocol lived in a source comment rather than beside it, so two
+    figures measured differently looked directly comparable. This makes the
+    conventions visible without opening any code, and shows which archives
+    still predate the requirement.
+    """
+    rows, missing = [], []
+    for key, path in sorted(resolved.items()):
+        d = R.load(path)
+        if not d:
+            continue
+        p = d.get("protocol")
+        name = f"<code>{Path(path).name}</code>"
+        if not p or "design" not in p:
+            missing.append(key)
+            rows.append([f"<code>{key}</code>", name,
+                         "<em>not recorded</em>", "<em>&mdash;</em>",
+                         "<em>&mdash;</em>", "<em>&mdash;</em>"])
+            continue
+        lay = p.get("layer", {})
+        which = lay.get("which", "?") if isinstance(lay, dict) else str(lay)
+        win = lay.get("pooled_over_last") if isinstance(lay, dict) else None
+        feat = p.get("features", {})
+        if isinstance(feat, dict) and "width" in feat:
+            fs = f"{feat['name']} ({feat['kept']} of {feat['width']})"
+        elif isinstance(feat, dict):
+            fs = ", ".join(f"{v['kept']}/{v['width']}" for v in feat.values())
+        else:
+            fs = str(feat)
+        rows.append([f"<code>{key}</code>", name, p["design"][:74],
+                     which + (f", pooled over last {win}" if win else ""),
+                     fs, str(p.get("n_assays", "?"))])
+    warn = ""
+    if missing:
+        warn = (f'<div class="card amber"><div class=row>'
+                f'<span class="chip c-amber">incomplete</span>'
+                f'<strong>{len(missing)} archive(s) predate the requirement</strong>'
+                f'</div><p><code>{"</code>, <code>".join(missing)}</code> were '
+                f'produced before their analysis recorded a protocol block. '
+                f'Their numbers are unaffected; what is missing is the record of '
+                f'how they were measured, which is exactly the gap that caused '
+                f'the corrections in section 2. Rerunning the analysis populates '
+                f'it.</p></div>')
+    return f"""
+<section id=ledger>
+<h2>11 &middot; Protocol ledger</h2>
+<p>Two numbers in this project are comparable only if they share a design, a
+layer convention and a feature width. Three separate corrections happened
+because one of those was recorded in a source comment instead of in the file.
+Each analysis now writes its own protocol, and this is the result.</p>
+{R.table(["input", "file", "design", "layer", "features (kept of width)",
+          "assays"], rows)}
+{warn}
+<p>The enforcement lives in <code>pi_protocol.py</code>: an analysis that omits
+design, layer, features, source or assay count fails rather than writing a file
+that will mislead later. A missing field there costs a rerun; a missing field in
+an archive costs a correction after the number has been quoted.</p>
+</section>"""
+
+
 def sec_repro(manifest, resolved):
     rows = [[f"<code>{k}</code>", f"<code>{e['file']}</code>", f"{e['bytes']:,}",
              f"<code>{e['sha256'][:12]}</code>"]
@@ -700,7 +837,7 @@ def sec_repro(manifest, resolved):
         f'reproducible in a submission.</p></div>')
     return f"""
 <section id=repro>
-<h2>11 &middot; Provenance</h2>
+<h2>12 &middot; Provenance</h2>
 {blocker}
 <p>Every number on this page was read from these files at build time. Figures
 <code>svd.png</code>, <code>heldout.png</code> and <code>depth.png</code> are
@@ -714,7 +851,7 @@ python build_master_report.py</code></pre>
 def main():
     ap = argparse.ArgumentParser()
     D = R.W / "runs"   # primary sources, not another report's copies
-    ap.add_argument("--transfer", default=str(R.W / "runs/transfer_vec.json"))
+    ap.add_argument("--transfer", default=str(R.W / "runs/transfer_full.json"))
     ap.add_argument("--bw", default=str(D / "bw_v1.json"))
     ap.add_argument("--heldout", default=str(D / "heldout_v1.json"))
     ap.add_argument("--depth", default=str(D / "depth_v1.json"))
@@ -723,6 +860,8 @@ def main():
     ap.add_argument("--chem", default=str(D / "chem_v1.json"))
     ap.add_argument("--transfer-ind", default=str(R.W / "runs/transfer_inductive.json"))
     ap.add_argument("--xio", default=str(R.W / "runs/xmodel_io_vec.json"))
+    ap.add_argument("--layermatch", default=str(R.W / "runs/layer_match.json"))
+    ap.add_argument("--svd-ds", default=str(R.W / "runs/svd_ds_v1.json"))
     ap.add_argument("--scrutiny", default=str(D / "scrutiny_v2.json"))
     ap.add_argument("--steer", default=str(R.W / "runs/steer_pooled.json"))
     ap.add_argument("--jac", default=str(R.W / "runs/jac_pooled.json"))
@@ -735,7 +874,7 @@ def main():
     resolved = {k: getattr(a, k) for k in
                 ("transfer", "bw", "heldout", "depth", "xmodel", "svd", "steer",
                  "jac", "gate", "rotate", "basis", "chem", "scrutiny",
-                 "transfer_ind", "xio")}
+                 "transfer_ind", "xio", "layermatch", "svd_ds")}
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "figures").mkdir(exist_ok=True)
 
@@ -743,14 +882,26 @@ def main():
     if missing:
         print(f"   missing inputs: {', '.join(missing)} -- pending cards")
 
-    for fig in BORROWED:
+    borrowed_stale = []
+    for fig, (key, cmd) in BORROWED.items():
         src = R.W / "report_svd" / "figures" / fig
-        if src.exists():
-            shutil.copy2(src, OUT / "figures" / fig)
-        else:
+        if not src.exists():
             print(f"   WARNING: borrowed figure {fig} not found in report_svd")
+            continue
+        data = resolved.get(key)
+        if data and Path(data).exists() and \
+                src.stat().st_mtime < Path(data).stat().st_mtime:
+            borrowed_stale.append((fig, cmd.format(**resolved)))
+        shutil.copy2(src, OUT / "figures" / fig)
+    if borrowed_stale and not a.allow_stale_figures:
+        raise SystemExit(
+            "borrowed figures older than the data they are drawn from:\n"
+            + "\n".join(f"  {f}" for f, _ in borrowed_stale)
+            + "\n\nregenerate in report_svd, then rebuild:\n"
+            + "\n".join(f"    {c}" for _, c in borrowed_stale))
 
     stale = R.check_figures(OUT, FIGSPEC, resolved, a.allow_stale_figures)
+    stale += [f for f, _ in borrowed_stale]
     manifest = R.archive_inputs(OUT, resolved, stale, CODE)
 
     TR, BW = R.load(a.transfer), R.load(a.bw)
@@ -761,12 +912,13 @@ def main():
     BA = R.load(a.basis)
     CH, SC = R.load(a.chem), R.load(a.scrutiny)
     TI, XI = R.load(a.transfer_ind), R.load(a.xio)
+    LM = R.load(a.layermatch)
 
     body = "".join([
         sec_lede(TR, HO, ST, SV), sec_headline(TR, BW, stale, TI),
-        sec_numbers(TR, SV, CH, HO), sec_chem(TR, CH, SC, BW), sec_what(SV),
+        sec_numbers(TR, SV, CH, HO, LM), sec_chem(TR, CH, SC, BW), sec_what(SV),
         sec_causal(ST, stale), sec_xmodel(XI, XM, stale), sec_where(DP, XM, BA), sec_heldout(HO),
-        sec_mech(JP, GP, RT), sec_limits(TR), sec_repro(manifest, resolved),
+        sec_mech(JP, GP, RT), sec_limits(TR), sec_ledger(resolved), sec_repro(manifest, resolved),
     ])
 
     R.page(
@@ -785,7 +937,8 @@ def main():
                    ("what", "4 what PC2 is"), ("causal", "5 causal"),
                    ("xmodel", "6 three models"), ("where", "7 depth"),
                    ("heldout", "8 held-out"), ("mechanism", "9 mechanism"),
-                   ("limits", "10 limits"), ("repro", "11 provenance")],
+                   ("limits", "10 limits"), ("ledger", "11 protocols"),
+                   ("repro", "12 provenance")],
         body=body, manifest=manifest,
         sibling=("../report_svd/index.html", "the full audit trail"))
 

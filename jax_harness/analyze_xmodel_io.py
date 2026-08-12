@@ -45,6 +45,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
 
@@ -143,6 +144,14 @@ def main():
 
     print("  PAIRED WITHIN-MODEL comparisons. Not a ranking: layer counts,\n"
           "  distogram grids and alignment handling all differ.")
+    out["protocol"] = pi_protocol.protocol(
+        script="analyze_xmodel_io.py",
+        design="within-assay, position-grouped splits; paired WITHIN model",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("dz_vec, final-layer pair row", 128),
+        source=f"{a.dir}/xm_<model>_{a.run}_<assay>.npz", n_assays=len(assays),
+        note="TM omitted: tmtools is not installed and substituting another "
+             "metric under that name would fabricate a number")
     Path(a.out).write_text(json.dumps(out, indent=2, default=float))
     print(f"\nwrote {a.out}")
 

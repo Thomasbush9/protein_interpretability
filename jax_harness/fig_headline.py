@@ -12,11 +12,19 @@ The single most important claim in the project had no figure. This is it.
      the model's own output or of the substitution itself. Per-assay values are
      drawn as well as the pooled interval, because a pooled mean with twelve
      points behind it should show the twelve points.
-  B  the same comparison paired within protein. Internal beats the emitted
+  B  the truncation curve, in two bases. "Why 16 and not 128" is not a judgement
+     call if the whole curve is shown; both quoted truncations are marked.
+     Dimensions are ranked by absolute Spearman on the TRAINING proteins only,
+     so the selection never sees the protein it is scored on. The rotated curve
+     fits an SVD on the training proteins and selects among components instead
+     of channels; a full-rank rotation is invertible, so a linear probe cannot
+     tell the two apart and the curves must converge at k = 128. They do, to
+     four decimals -- that endpoint is a correctness check, not a finding.
+  C  the same comparison paired within protein. Internal beats the emitted
      output in all twelve, which is the fact a mean and an interval cannot show
      -- a +0.25 average gap could in principle be four large wins and eight
      losses.
-  C  where the output fails. Splitting the target into BETWEEN-position variance
+  D  where the output fails. Splitting the target into BETWEEN-position variance
      (which residue was mutated) and WITHIN-position variance (which substitution
      at a fixed residue) separates a trivially available signal from a hard one.
      Burial and packing already say a lot about the first. The second is the one
@@ -24,7 +32,7 @@ The single most important claim in the project had no figure. This is it.
      is where the emitted structure retains almost nothing while the internal
      representation retains most of its advantage.
 
-Panel C is the honest counterweight to panel A. Substitution chemistry is close
+Panel D is the honest counterweight to panel A. Substitution chemistry is close
 to the internal probe on within-position variance, and the figure says so rather
 than dropping the baseline that competes.
 
@@ -58,7 +66,7 @@ HALO = dict(boxstyle="round,pad=0.18", facecolor=SURF, edgecolor="none",
             alpha=0.92)
 
 # predictor key -> (label, colour slot)
-PRED = [("internal_vec", "internal, 128 pair channels", 0),
+PRED = [("internal_vec", "internal, all 128 pair channels", 0),
         ("internal", "internal, per-layer magnitudes", 4),
         ("chemistry", "substitution chemistry", 2),
         ("output_rich", "emitted structure (10 features)", 1),
@@ -87,9 +95,8 @@ def tidy(ax, title, sub=None):
     ax.set_axisbelow(True)
 
 
-fig = plt.figure(figsize=(15.4, 5.2))
-gs = fig.add_gridspec(1, 3, wspace=0.34, top=0.80, bottom=0.15,
-                      width_ratios=[1.15, 1.0, 1.0])
+fig = plt.figure(figsize=(13.6, 9.4))
+gs = fig.add_gridspec(2, 2, wspace=0.30, hspace=0.52, top=0.88, bottom=0.09)
 
 # ---- A: the predictor comparison ----------------------------------------
 ax = fig.add_subplot(gs[0, 0])
@@ -113,8 +120,60 @@ ax.set_xlabel("Spearman on the held-out protein")
 tidy(ax, "A  Internal beats everything the model emits",
      "leave-one-assay-out; dots are the 12 proteins, bar is the 95% interval")
 
-# ---- B: paired, within protein ------------------------------------------
+# ---- B: how much of the representation is needed -------------------------
+# Answers "why 16 and not 128?" by not choosing: the curve is the answer, and
+# both truncations the report quotes are marked on it.
 ax = fig.add_subplot(gs[0, 1])
+SW = T.get("k_sweep") or {}
+if SW:
+    kk = sorted(int(k) for k in SW)
+    have_rot = "rotated" in SW[str(kk[0])]
+    series = [("channels", SLOT[0], "the model's own channels", "-")]
+    if have_rot:
+        series.append(("rotated", SLOT[4], "rotated onto a training-fitted basis",
+                       (0, (4, 2))))
+    for tag, col, lab, ls in series:
+        mu = np.array([SW[str(k)][tag]["mean"] for k in kk])
+        lo = np.array([SW[str(k)][tag]["ci_lo"] for k in kk])
+        hi = np.array([SW[str(k)][tag]["ci_hi"] for k in kk])
+        ax.fill_between(kk, lo, hi, color=col, alpha=0.13, linewidth=0)
+        ax.plot(kk, mu, color=col, lw=2.2, ls=ls, marker="o", ms=4.0,
+                solid_capstyle="round", zorder=4)
+        ax.annotate(lab, (kk[2], mu[2]), xytext=(0, 14 if tag == "rotated" else -20),
+                    textcoords="offset points", ha="left", fontsize=8.2,
+                    color=col, bbox=HALO, zorder=7)
+    mu = np.array([SW[str(k)]["channels"]["mean"] for k in kk])
+    for k, lab in ((16, "16 selected"), (128, "all 128")):
+        if k in kk:
+            i = kk.index(k)
+            ax.scatter([k], [mu[i]], s=86, facecolor=SURF, edgecolor=SLOT[0],
+                       linewidth=2.0, zorder=6)
+            ax.annotate(f"{lab}\n{mu[i]:.3f}", (k, mu[i]), xytext=(0, -32),
+                        textcoords="offset points", ha="center", fontsize=8.2,
+                        color=INK, bbox=HALO, zorder=7)
+    if have_rot:
+        d = SW[str(kk[-1])]["rotated"]["mean"] - SW[str(kk[-1])]["channels"]["mean"]
+        ax.annotate(f"identical at full rank\n(difference {d:+.4f})",
+                    (kk[-1], mu[-1]), xytext=(-6, 30), textcoords="offset points",
+                    ha="right", fontsize=8.0, color=INK2, bbox=HALO, zorder=7)
+    for key, slot, lab in (("chemistry", 2, "substitution chemistry"),
+                           ("output_rich", 1, "emitted structure")):
+        v = P[key]["mean"]
+        ax.axhline(v, color=SLOT[slot], lw=1.4, ls=(0, (4, 3)), zorder=2)
+        ax.annotate(f"{lab}  {v:.3f}", (kk[0], v), xytext=(2, 6),
+                    textcoords="offset points", fontsize=8.2, color=SLOT[slot],
+                    zorder=6)
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(kk, [str(k) for k in kk])
+    ax.set_xlim(min(kk), max(kk))
+    ax.set_ylim(0.22, 0.92)
+    ax.set_xlabel("dimensions kept (k)")
+    ax.set_ylabel("Spearman on the held-out protein")
+tidy(ax, "B  How much of the representation is needed",
+     "ranked on TRAINING proteins only; the two bases must meet at full rank")
+
+# ---- C: paired, within protein ------------------------------------------
+ax = fig.add_subplot(gs[1, 0])
 names = list(P["internal"]["per_assay"])
 ints = np.array([P["internal_vec"]["per_assay"][n] for n in names])
 outs = np.array([P["output_rich"]["per_assay"][n] for n in names])
@@ -143,11 +202,11 @@ ax.annotate(f"internal wins {g['wins']}/{g['n_assays']}\ngap {g['gap']:+.3f} "
 ax.set_xlim(-0.05, 0.92)
 ax.set_ylim(-1.25, len(names) + 0.2)
 ax.set_xlabel("Spearman on the held-out protein")
-tidy(ax, "B  In every one of the twelve proteins",
+tidy(ax, "C  In every one of the twelve proteins",
      "same rows, same protocol, paired within protein")
 
 # ---- C: between vs within position --------------------------------------
-ax = fig.add_subplot(gs[0, 2])
+ax = fig.add_subplot(gs[1, 1])
 xs = np.arange(2)
 w = 0.26
 for i, (key, label, slot) in enumerate(BW):
@@ -166,7 +225,7 @@ ax.set_xticks(xs, ["between positions\n(which residue)",
 ax.set_ylim(0, 0.92)
 ax.set_ylabel("Spearman")
 ax.legend(frameon=False, fontsize=8.4, loc="upper right", ncol=1)
-tidy(ax, "C  The output collapses on the hard half",
+tidy(ax, "D  The output collapses on the hard half",
      "chemistry is competitive within position; the emitted structure is not")
 
 fig.savefig(a.out, dpi=170, bbox_inches="tight", facecolor=SURF)
