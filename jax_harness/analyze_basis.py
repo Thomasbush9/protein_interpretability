@@ -56,10 +56,6 @@ import pi_stats  # noqa: E402
 EPS = 1e-8
 
 
-def zc(M):
-    return (M - M.mean(0)) / (M.std(0) + EPS)
-
-
 def basis_at(layers_by_assay, li, n_pc, KL=None, n_boot=500):
     """The shared basis at layer li, through pi_basis.
 
@@ -82,7 +78,7 @@ def basis_at(layers_by_assay, li, n_pc, KL=None, n_boot=500):
                          n_boot=n_boot,
                          orient_ref={str(i): K[:, li] for i, K in enumerate(KL)},
                          **kw)
-    return B.components, B.gm
+    return B
 
 
 def princ(A, B):
@@ -117,7 +113,7 @@ def main():
 
     # The archived basis must be reproducible from the archives, or the
     # comparison below is against a basis of unknown provenance.
-    V_last, _ = basis_at(DZ, L - 1, a.n_pc)
+    V_last = basis_at(DZ, L - 1, a.n_pc).components
     agree = [float(abs(V_last[c] @ V_ref_file[c])) for c in range(a.n_pc)]
     print("refit of the last-layer basis vs the archived pc2_v2.npz (|cos|):")
     print("   " + "  ".join(f"PC{c+1} {agree[c]:.4f}" for c in range(a.n_pc)))
@@ -127,7 +123,7 @@ def main():
               "   rotation numbers below are not comparable to the study.")
     print()
 
-    Vs = [basis_at(DZ, li, a.n_pc)[0] for li in range(L)]
+    Vs = [basis_at(DZ, li, a.n_pc).components for li in range(L)]
 
     # ---- rotation of the subspace ----------------------------------------
     k = min(a.k, a.n_pc)
@@ -157,12 +153,12 @@ def main():
                                           for c in range(a.n_pc)))
     meaning = np.zeros((L, a.n_pc))
     for li in list(range(0, L, 8)) + [L - 1]:
-        V, gm = basis_at(DZ, li, a.n_pc)
+        Bl = basis_at(DZ, li, a.n_pc)
         cells = []
         for c in range(a.n_pc):
             g = {}
             for ai, nm in enumerate(names):
-                P = (zc(DZ[ai][:, li, :]) - gm) @ V[c]
+                P = Bl.project(DZ[ai], layer=li)[:, c]
                 g[nm] = [pi_stats.spearman(P, KL[ai][:, li])]
             m, lo, hi = pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
                                                    hierarchical=False)[:3]
@@ -190,9 +186,9 @@ def main():
         SD = np.zeros((len(names), L, dim))
         GM = np.zeros((L, dim))
         for li in range(L):
-            V, gm = basis_at(DZ, li, a.n_pc, KL=KL, n_boot=500)
-            GM[li] = gm
-            Vout[li] = V
+            Bl = basis_at(DZ, li, a.n_pc, KL=KL, n_boot=500)
+            GM[li] = Bl.gm
+            Vout[li] = Bl.components
             for ai in range(len(names)):
                 SD[ai, li] = DZ[ai][:, li, :].std(0)
         np.savez_compressed(a.npz, V=Vout, sd=SD, gm=GM,

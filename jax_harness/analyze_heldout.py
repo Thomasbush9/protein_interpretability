@@ -88,10 +88,6 @@ NON_STABILITY = {
 }
 
 
-def zc(M):
-    return (M - M.mean(0)) / (M.std(0) + EPS)
-
-
 def short(name):
     return name.split("_")[0]
 

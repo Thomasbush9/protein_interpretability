@@ -57,10 +57,6 @@ EPS = 1e-9
 N_PC = 4
 
 
-def zc(M):
-    return (M - M.mean(0)) / (M.std(0) + EPS)
-
-
 def onehot(letters):
     M = np.zeros((len(letters), len(AA)))
     for i, c in enumerate(letters):

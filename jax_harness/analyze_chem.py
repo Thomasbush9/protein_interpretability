@@ -58,10 +58,6 @@ EPS = 1e-9
 N_PC = 4
 
 
-def zc(M):
-    return (M - M.mean(0)) / (M.std(0) + EPS)
-
-
 def residualise(X, C, tr):
     """Remove the chemistry-predictable part of every channel of X.
 
@@ -169,12 +165,13 @@ def main():
     # 2. what does the chemistry-residual subspace look like?
     # ======================================================================
     print("\nChemistry-residual subspace\n")
-    Rg = []
-    for n in names:
-        tr = np.ones(len(A[n]["y"]), bool)
-        Rg.append(zc(residualise(A[n]["X"], A[n]["C"], tr)))
-    Rg = np.concatenate(Rg, 0)
-    Vr = np.linalg.svd(Rg - Rg.mean(0), full_matrices=False)[2][:N_PC]
+    # Same construction as the shared basis, on chemistry-residualised rows --
+    # so it goes through the same call. Unoriented: only principal angles and
+    # per-assay correlations are read off it, and both are sign-invariant.
+    Rb = {n: residualise(A[n]["X"], A[n]["C"], np.ones(len(A[n]["y"]), bool))
+          for n in names}
+    Br = pi_basis.fit(Rb, layer=-1, orient_on=None, n_pc=N_PC, eps=EPS)
+    Vr = Br.components
     ang = np.linalg.svd(V @ Vr.T, compute_uv=False)
     print(f"   principal angles between the original and residual top-{N_PC} "
           f"subspaces:")
@@ -184,8 +181,7 @@ def main():
     ann = {}
     for n in names:
         m = len(A[n]["y"])
-        Pr = (zc(residualise(A[n]["X"], A[n]["C"], np.ones(m, bool)))
-              - Rg.mean(0)) @ Vr.T
+        Pr = Br.project(Rb[n], layer=-1)
         ann[n] = [pi_stats.spearman(Pr[:, c], A[n]["y"]) for c in range(N_PC)]
         off += m
     print(f"\n   residual component vs DMS (assay-level):")

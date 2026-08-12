@@ -49,10 +49,6 @@ EPS = 1e-9
 N_PC = 4
 
 
-def zc(M):
-    return (M - M.mean(0)) / (M.std(0) + EPS)
-
-
 def main():
     ap = argparse.ArgumentParser()
     R = "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/runs/"
