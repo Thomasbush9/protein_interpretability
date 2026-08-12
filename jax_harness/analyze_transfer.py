@@ -47,6 +47,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import geom  # noqa: E402
 import pi_chem  # noqa: E402
+import pi_basis  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import (grouped_split, output_matrix,  # noqa: E402
                                      ridge_fit, ridge_pred, select_k)
@@ -79,6 +81,11 @@ def main():
                             "prot_interp_files/runs/tm_cache.npz",
                     help="tmtools is in the repo venv, not the container; "
                          "precompute_tm.py writes this")
+    ap.add_argument("--k-sweep", default="",
+                    help="comma-separated k values; records the leave-one-assay-out "
+                         "curve for the 128-channel internal block, so a figure can "
+                         "show how much of the representation is needed instead of "
+                         "asserting one truncation")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -169,6 +176,77 @@ def main():
                                           A[held]["y"][te]))
         res["internal_within"][held] = float(np.nanmean(vals))
 
+    # ---- truncation curve for the 128-channel block -----------------------
+    # Same leave-one-assay-out loop, same selection rule, k varied. The ridge
+    # solve runs on the accelerator: this account has no CPU partition, so the
+    # job holds a GPU either way and should use it.
+    sweep = {}
+    if a.k_sweep:
+        import jax, jax.numpy as jnp
+        print(f"\n   jax devices: {jax.devices()}", flush=True)
+
+        @jax.jit
+        def solve(Xtr, ytr, Xte, lam):
+            Xb = jnp.column_stack([Xtr, jnp.ones(len(Xtr))])
+            A = Xb.T @ Xb + lam * jnp.eye(Xb.shape[1])
+            A = A.at[-1, -1].add(-lam)          # never penalise the intercept
+            w = jnp.linalg.solve(A, Xb.T @ ytr)
+            return jnp.column_stack([Xte, jnp.ones(len(Xte))]) @ w
+
+        ks_sweep = [int(x) for x in a.k_sweep.split(",")]
+        print(f"   k-sweep on internal_vec: {ks_sweep}")
+        # Two bases, one protocol. CHANNELS keeps the model's own coordinates
+        # and selects among them; ROTATED fits an SVD on the training assays
+        # only and selects among components. At k = full rank a rotation is
+        # invertible, so a linear probe cannot distinguish them and the two
+        # curves MUST meet -- that endpoint is the built-in check, not a result.
+        for kk in ks_sweep:
+            per, per_rot = {}, {}
+            for held in names:
+                tr_names = [n for n in names if n != held]
+                Xtr = np.concatenate([A[n]["internal_vec"] for n in tr_names], 0)
+                Xte = A[held]["internal_vec"]
+                ytr = np.concatenate([A[n]["yz"] for n in tr_names], 0)
+                kc = min(kk, Xtr.shape[1])
+
+                idx = select_k(Xtr, ytr, kc)
+                pred = np.asarray(solve(jnp.asarray(Xtr[:, idx]), jnp.asarray(ytr),
+                                        jnp.asarray(Xte[:, idx]), float(a.lam)))
+                per[held] = pi_stats.spearman(pred, A[held]["y"])
+
+                # zscore=False: this basis is NOT PC2. Every other basis in
+                # the project standardises per assay first; this one
+                # decomposes the model's own channel units, so a protein with
+                # a larger channel scale pulls the components toward itself.
+                # The two directions overlap at |cos| = 0.87, measured in
+                # pi_basis_test.py -- close enough to look like the same
+                # object and not be one. Nothing said so before; the flag says
+                # it at the call site now.
+                Bk = pi_basis.fit(
+                    {n: A[n]["internal_vec"] for n in tr_names}, layer=-1,
+                    orient_on=None, zscore=False)
+                Ptr = Bk.features(Xtr, layer=-1) @ Bk.components.T
+                Pte = Bk.project(Xte, layer=-1)
+                jdx = select_k(Ptr, ytr, kc)
+                predr = np.asarray(solve(jnp.asarray(Ptr[:, jdx]), jnp.asarray(ytr),
+                                         jnp.asarray(Pte[:, jdx]), float(a.lam)))
+                per_rot[held] = pi_stats.spearman(predr, A[held]["y"])
+
+            out_k = {}
+            for tag, d_ in (("channels", per), ("rotated", per_rot)):
+                pt, lo, hi, _ = pi_stats.cluster_bootstrap(
+                    {n: [d_[n]] for n in names}, n_boot=10000, seed=0,
+                    hierarchical=False)
+                out_k[tag] = {"mean": pt, "ci_lo": lo, "ci_hi": hi,
+                              "per_assay": d_}
+            # backward-compatible: bare keys are the channel basis
+            sweep[str(kk)] = {**out_k["channels"], **out_k,
+                              "rotated_basis": dict(Bk.protocol)["basis"]}
+            d_gap = out_k["rotated"]["mean"] - out_k["channels"]["mean"]
+            print(f"     k={kk:4d}  channels {out_k['channels']['mean']:+.3f}  "
+                  f"rotated {out_k['rotated']['mean']:+.3f}  "
+                  f"diff {d_gap:+.4f}")
+
     ORDER = ["internal_within", "internal", "internal_vec", "chemistry",
              "output_rich", "TM_to_WT"]
     LAB = {"internal_within": "internal (within-assay)",
@@ -209,12 +287,34 @@ def main():
         wins = sum(1 for n in names if res[ka][n] > res[kb][n])
         gaps[lab] = {"gap": pt, "ci_lo": lo, "ci_hi": hi, "wins": wins,
                      "n_assays": len(names)}
-        flag = "" if (np.isfinite(lo) and lo > 0) else "   <- includes zero"
+        # An interval entirely BELOW zero is a significant difference in the
+        # other direction, not an inconclusive one. The old test flagged
+        # "within-assay - transferred" at [-0.098, -0.036] as including zero.
+        excl = np.isfinite(lo) and np.isfinite(hi) and (lo > 0 or hi < 0)
+        flag = "" if excl else "   <- includes zero"
         print(f"  {lab:36s} {pt:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]  "
               f"{wins}/{len(names)} assays{flag}")
 
     Path(a.out).write_text(json.dumps(
-        {"protocol": {"design": "leave-one-assay-out", "k": a.k, "lam": a.lam,
+        {"k_sweep": sweep, "protocol": {**pi_protocol.protocol(
+             script="analyze_transfer.py",
+             design="leave-one-assay-out (train on 11 assays, test on the 12th)",
+             layer=pi_protocol.layers("final", n_layers=A[names[0]]["raw"]["internal"].shape[1] // 4),
+             features={b: pi_protocol.features(
+                 b, A[names[0]]["raw"][b].shape[1],
+                 kept=min(a.k, A[names[0]]["raw"][b].shape[1])) for b in BLOCKS},
+             source=" ".join(a.features) if isinstance(a.features, list) else a.features,
+             n_assays=len(names),
+             n_train_rows=int(sum(len(A[n]["y"]) for n in names)
+                              - len(A[names[0]]["y"])),
+             selection="top-k by |Spearman| on TRAINING rows only",
+             normalisation_variant=("inductive (training-assay statistics)"
+                                    if a.inductive else
+                                    "transductive (each assay scaled by its own)"),
+             note="internal_vec is the 128 pair channels at the FINAL layer; "
+                  "internal is 4 scalar quantities x every layer, so dz enters "
+                  "it only as a per-layer norm."),
+             "design_short": "leave-one-assay-out", "k": a.k, "lam": a.lam,
                       "normalisation": "features and target z-scored within assay",
                       "n_assays": len(names)},
          "normalisation_mode": "inductive (training-assay statistics)"
