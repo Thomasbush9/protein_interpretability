@@ -208,13 +208,28 @@ class Basis:
         weaker, and the only version in which a held-out protein contributes
         nothing at all.
         """
+        return self.features(X, layer, standardise) @ self.components.T
+
+    def features(self, X, layer, standardise="own"):
+        """The standardised, centred rows -- what `project` decomposes.
+
+        A probe fitted on the model's own channels rather than on components
+        needs exactly this, and callers were re-deriving it with a local `zc`.
+        Exposing it is also what lets the transductive/inductive pair be two
+        arguments instead of two hand-written expressions:
+
+            Zt = b.features(X, -1)                      # own statistics
+            Zi = b.features(X, -1, standardise="train") # training statistics
+
+        which is the difference between a held-out protein contributing its
+        own scale and contributing nothing at all.
+        """
         if layer != self.layer:
             raise ValueError(
-                f"this basis was fitted at layer {self.layer}; you asked to "
-                f"project at layer {layer}. The PC basis rotates with depth "
-                f"(0.09 overlap at mid-depth against 0.031 chance), so a "
-                f"last-layer basis does not describe another layer. Refit at "
-                f"{layer} rather than reusing this object.")
+                f"this basis was fitted at layer {self.layer}; you asked for "
+                f"layer {layer}. The PC basis rotates with depth (0.09 overlap "
+                f"at mid-depth against 0.031 chance), so a last-layer basis "
+                f"does not describe another layer. Refit at {layer}.")
         Xb, _, _ = _slice(X, layer)
         if standardise == "own":
             Z = _standardise(Xb, self.centered, eps=self.eps,
@@ -225,7 +240,7 @@ class Basis:
         else:
             raise ValueError(f"standardise must be 'own' or 'train', "
                              f"got {standardise!r}")
-        return (Z - self.gm) @ self.components.T
+        return Z - self.gm
 
     def to_raw(self, c, assay):
         """Component c as a raw-channel VECTOR: e_c = s * v_c."""

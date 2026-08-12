@@ -49,6 +49,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
+import pi_basis  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
 
@@ -95,17 +97,18 @@ def main():
     print(f"{len(names)} assays\n")
 
     # ---- shared basis, oriented, exactly as the report defines it ---------
-    Xg = np.concatenate([zc(A[n]["X"]) for n in names], 0)
-    gm = Xg.mean(0)
-    V = np.linalg.svd(Xg - gm, full_matrices=False)[2][:N_PC]
-    for c in range(N_PC):
-        g = {n: [pi_stats.spearman((zc(A[n]["X"]) - gm) @ V[c], A[n]["kl"])]
-             for n in names}
-        if pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
-                                      hierarchical=False)[0] < 0:
-            V[c] = -V[c]
+    # "exactly as the report defines it" is now the same call the report's
+    # other analyses make, rather than a sentence asserting it. Note that the
+    # leave-one-assay-out block further down uses a DIFFERENT orientation rule
+    # -- sign from the training assays against DMS -- which this comment used
+    # to cover as though both were one protocol.
+    B = pi_basis.fit({n: A[n]["X"] for n in names}, layer=-1,
+                     orient_on="kl_glob",
+                     orient_ref={n: A[n]["kl"] for n in names},
+                     orient_k=N_PC, n_pc=N_PC, eps=EPS)
+    V = B.components
     for n in names:
-        A[n]["P"] = (zc(A[n]["X"]) - gm) @ V.T          # (n, N_PC)
+        A[n]["P"] = B.project(A[n]["X"], layer=-1)       # (n, N_PC)
 
     # ======================================================================
     # 1. incremental value, both directions
@@ -200,14 +203,16 @@ def main():
     loao = {}
     for h in names:
         tr_n = [n for n in names if n != h]
-        Xt = np.concatenate([zc(A[n]["X"]) for n in tr_n], 0)
-        gmt = Xt.mean(0)
-        Vt = np.linalg.svd(Xt - gmt, full_matrices=False)[2][:N_PC]
-        # orient on the TRAINING assays only, against DMS, then apply unchanged
-        sgn = np.sign(np.mean([
-            pi_stats.spearman((zc(A[n]["X"]) - gmt) @ Vt[1], A[n]["y"])
-            for n in tr_n]))
-        sc = ((zc(A[h]["X"]) - gmt) @ Vt[1]) * sgn
+        # orient_on="dms_train" IS this block's rule: the sign comes from the
+        # training assays only, so nothing about the held-out protein reaches
+        # the basis or its orientation. That is what makes this the honest
+        # transfer number, and it is a different rule from the shared basis
+        # above -- which is why pi_basis requires it to be named.
+        Bt = pi_basis.fit({n: A[n]["X"] for n in tr_n}, layer=-1,
+                          orient_on="dms_train",
+                          orient_ref={n: A[n]["y"] for n in tr_n},
+                          orient_k=N_PC, n_pc=N_PC, eps=EPS)
+        sc = Bt.project(A[h]["X"], layer=-1)[:, 1]
         loao[h] = pi_stats.spearman(sc, A[h]["y"])
         print(f"   {h:8s} {loao[h]:+.3f}")
     pt, lo, hi, _ = pi_stats.cluster_bootstrap(
@@ -215,7 +220,21 @@ def main():
     print(f"\n   pooled {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
     Path(a.out).write_text(json.dumps(
-        {"blocks": summary, "increments": gaps,
+        {"protocol": pi_protocol.protocol(
+             script="analyze_chem.py",
+             design="leave-one-assay-out for pc2_alone_loao; nested/incremental "
+                    "ridge comparisons within assay for the increments",
+             layer=pi_protocol.layers("final"),
+             features=pi_protocol.features("dz_site final-layer pair row", 128),
+             source=a.glob, n_assays=len(names),
+             note="increments are nested comparisons (what X adds on top of Y), "
+                  "not head-to-head races",
+             **B.protocol,
+             basis_loao={"orient_on": "dms_train",
+                         "note": "the LOAO block fits and orients on the "
+                                 "training assays only; a DIFFERENT rule from "
+                                 "the shared basis recorded above"}),
+         "blocks": summary, "increments": gaps,
          "residual_subspace": {
              "cos2_vs_original": float((ang ** 2).mean()),
              "chance": N_PC / V.shape[1],

@@ -70,6 +70,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_metrics  # noqa: E402
+import pi_basis  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import grouped_split  # noqa: E402
 
@@ -158,37 +160,39 @@ def main():
         raise SystemExit(f"no basis archives matched {a.basis_glob}")
     print(f"basis: {len(bn)} assays, {sum(len(B[n]['y']) for n in bn)} variants")
 
-    Xg = np.concatenate([zc(B[n]["X"]) for n in bn], 0)
-    gm = Xg.mean(0)
-    V = np.linalg.svd(Xg - gm, full_matrices=False)[2]              # (128, 128)
-    # Orient on kl_glob, exactly as analyze_svd/analyze_chem do. Singular-vector
-    # signs are arbitrary; without a fixed convention the held-out correlations
-    # would carry a meaningless sign and averaging them would cancel.
-    for c in (0, 1):
-        g = {n: [pi_stats.spearman((zc(B[n]["X"]) - gm) @ V[c], B[n]["kl"])]
-             for n in bn}
-        if pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
-                                      hierarchical=False)[0] < 0:
-            V[c] = -V[c]
+    # Orient on kl_glob. Singular-vector signs are arbitrary; without a fixed
+    # convention the held-out correlations would carry a meaningless sign and
+    # averaging them would cancel. The comment here used to add "exactly as
+    # analyze_svd/analyze_chem do" -- which was the only thing keeping three
+    # implementations in step, and was not true of analyze_chem's LOAO block.
+    # It is the same call now.
+    Bs = pi_basis.fit({n: B[n]["X"] for n in bn}, layer=-1,
+                      orient_on="kl_glob",
+                      orient_ref={n: B[n]["kl"] for n in bn},
+                      orient_k=2, eps=EPS)
+    gm, V = Bs.gm, Bs.components                                   # (128, 128)
 
     # A second, separate sign: which way the component points relative to DMS.
     # Only the non-Spearman metrics need it (they are not sign-invariant), and
     # like everything else it is fixed on the BASIS and never re-chosen.
     sgn_dms = {c: float(np.sign(np.mean(
-        [pi_stats.spearman((zc(B[n]["X"]) - gm) @ V[c], B[n]["y"]) for n in bn])))
+        [pi_stats.spearman(Bs.project(B[n]["X"], layer=-1)[:, c], B[n]["y"])
+         for n in bn])))
         for c in (0, 1)}
     print(f"   DMS orientation from the basis: PC1 {sgn_dms[0]:+.0f}, "
           f"PC2 {sgn_dms[1]:+.0f}")
 
-    # raw (un-z-scored) training channel statistics, for the inductive variant
-    Xraw = np.concatenate([B[n]["X"] for n in bn], 0)
-    mu_tr, sd_tr = Xraw.mean(0), Xraw.std(0) + EPS
+    # raw training channel statistics for the inductive variant now live on
+    # the basis (mu_pooled / sd_pooled) and are applied by
+    # features(standardise="train"), so the two variants differ by an argument
+    # rather than by two hand-written expressions.
 
     # frozen ridge baselines, fitted on the pooled basis with targets z-scored
     # per assay so no protein's dynamic range dominates
     ytr = np.concatenate([(B[n]["y"] - B[n]["y"].mean()) / (B[n]["y"].std() + EPS)
                           for n in bn], 0)
-    w_dz = ridge_train(Xg - gm, ytr, a.lam)
+    Xg_c = np.concatenate([Bs.features(B[n]["X"], layer=-1) for n in bn], 0)
+    w_dz = ridge_train(Xg_c, ytr, a.lam)
 
     Ctr = np.concatenate([pi_chem.chem_matrix(B[n]["mutant"]) for n in bn], 0)
     cmu, csd = Ctr.mean(0), Ctr.std(0) + EPS
@@ -199,7 +203,8 @@ def main():
     Rdirs /= np.linalg.norm(Rdirs, axis=1, keepdims=True)
 
     # sanity: within the basis itself, so the held-out numbers have a reference
-    within = {n: pi_stats.spearman((zc(B[n]["X"]) - gm) @ V[1], B[n]["y"])
+    within = {n: pi_stats.spearman(Bs.project(B[n]["X"], layer=-1)[:, 1],
+                                   B[n]["y"])
               for n in bn}
     wpt, wlo, whi, _ = pi_stats.cluster_bootstrap(
         {n: [v] for n, v in within.items()}, n_boot=10000, seed=0,
@@ -234,8 +239,8 @@ def main():
     rows = {}
     for n in hn:
         d = H[n]
-        Zt = zc(d["X"]) - gm                       # transductive
-        Zi = (d["X"] - mu_tr) / sd_tr - gm         # inductive
+        Zt = Bs.features(d["X"], layer=-1)                          # transductive
+        Zi = Bs.features(d["X"], layer=-1, standardise="train")      # inductive
         C = (pi_chem.chem_matrix(d["mutant"]) - cmu) / csd
         y = d["y"]
         rr = [pi_stats.spearman(Zt @ r, y) for r in Rdirs]
@@ -443,7 +448,18 @@ def main():
               f"{max(rows[m]['n_res'] for m in near)} aa "
               f"({', '.join(short(m) for m in near)})  gap {matched[n]['gap']:+.3f}")
 
-    out = {"protocol": {
+    out = {"protocol": {**pi_protocol.protocol(
+            script="analyze_heldout.py",
+            design="frozen basis: fitted on the basis assays, applied unchanged "
+                   "to disjoint held-out proteins; nothing refit, no sign flip",
+            layer=pi_protocol.layers("final"),
+            features=pi_protocol.features("dz_site, final-layer pair row", 128),
+            source=f"basis {a.basis_glob} -> heldout {a.heldout_glob}",
+            n_assays=len(H),
+            n_basis_assays=len(bn),
+            **Bs.protocol,
+            orientation="components oriented on the BASIS assays against "
+                        "kl_glob; sign frozen before the held-out set is read"),
                "basis_glob": a.basis_glob, "heldout_glob": a.heldout_glob,
                "basis_assays": bn, "lam": a.lam, "n_random": a.n_random,
                "note": "basis frozen on the basis assays; no held-out label "
