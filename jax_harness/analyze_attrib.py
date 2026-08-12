@@ -48,6 +48,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import (grouped_split, ridge_fit,  # noqa: E402
                                      ridge_pred)
@@ -196,7 +198,14 @@ def main():
               f"   {keep:5.0f}% of raw")
     res["pc2_vs_dms_residualised"] = out
 
-    Path(a.out).write_text(json.dumps(res, indent=2, default=float))
+    pi_archive.write_result(a.out, res, protocol=pi_protocol.protocol(
+        script="analyze_attrib.py",
+        design="within-assay, position-grouped CV for the attribution blocks; "
+               "rank-residualisation on identity and on site for the DMS tests",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("dz_site, final-layer pair row", 128,
+                                      kept=N_PC),
+        source=a.glob, n_assays=len(names), seeds=a.seeds, frac=a.frac))
     print(f"\nwrote {a.out}")
 
 

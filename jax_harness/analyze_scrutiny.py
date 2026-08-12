@@ -43,6 +43,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 
 EPS = 1e-9
@@ -192,7 +194,14 @@ def main():
     res["pc2_vs_dms_partial_on_chemistry"] = {"raw": raw, "partial": pt,
                                               "ci_lo": lo, "ci_hi": hi}
 
-    Path(a.out).write_text(json.dumps(res, indent=2, default=float))
+    pi_archive.write_result(a.out, res, protocol=pi_protocol.protocol(
+        script="analyze_scrutiny.py",
+        design="one pooled ranking against twelve within-assay ones; the "
+               "wild-type-anchoring control refits the basis scale-only",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("dz_site, final-layer pair row", 128,
+                                      kept=N_PC),
+        source=a.glob, n_assays=len(names)))
     print(f"\nwrote {a.out}")
 
 

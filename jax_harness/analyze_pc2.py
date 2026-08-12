@@ -64,6 +64,8 @@ import jax.numpy as jnp  # noqa: E402
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_basis  # noqa: E402
 import pi_conf  # noqa: E402
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 
 EPS = 1e-9
@@ -278,7 +280,18 @@ def main():
     print("   component. One that does not was the component standing in for")
     print("   how large the perturbation is.")
 
-    Path(a.out).write_text(json.dumps(out, indent=2, default=float))
+    pi_archive.write_result(a.out, out, protocol=pi_protocol.protocol(
+        script="analyze_pc2.py",
+        design="within-assay: variants split by component score into quartiles, "
+               "profiled against distance from the mutated residue; the "
+               "magnitude-adjusted panels residualise on perturbation size",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("dz_site, final-layer pair row", 128,
+                                      kept=N_PC,
+                                      note="components, not raw channels"),
+        source=a.glob, n_assays=len(A),
+        pair_sample="reconstructed from exp_gym2's rng and checked against "
+                    "disto.shape[1] for every assay before use"))
     print(f"\nwrote {a.out}")
     if a.npz:
         np.savez_compressed(a.npz, V=V, orient=np.array(orient), bins=BINS,

@@ -51,6 +51,8 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_basis  # noqa: E402
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 
 EPS = 1e-8
@@ -195,7 +197,7 @@ def main():
                             assays=np.array(names))
         print(f"wrote {a.npz}  (per-layer bases, oriented)")
 
-    Path(a.out).write_text(json.dumps({
+    pi_archive.write_result(a.out, {
         "assays": names, "layers": L, "dim": dim, "n_pc": a.n_pc, "k": k,
         "refit_vs_archived": agree,
         "rot_vs_last": rot, "rot_adjacent": adj,
@@ -203,7 +205,19 @@ def main():
         "meaning_spearman": meaning.tolist(),
         "random_baseline": k / dim,
         "worst_vs_last": lo, "hinge_layer": hinge,
-    }, indent=2, default=float))
+    }, protocol=pi_protocol.protocol(
+        script="analyze_basis.py",
+        design="the shared basis REFITTED at every layer, then layers compared "
+               "by principal angles; the point is that a last-layer basis does "
+               "not describe another layer, so nothing here reuses one",
+        layer=pi_protocol.layers("all", n_layers=L),
+        features=pi_protocol.features("dz_site pair row at each layer", dim,
+                                      kept=a.n_pc),
+        source=a.glob, n_assays=len(names),
+        orientation="kl_glob at each layer's OWN kl, n_boot=500 -- a smaller "
+                    "bootstrap than analyze_pc2's 2000, which matters only "
+                    "where a correlation sits near zero",
+        archived_basis=a.pc))
     print(f"wrote {a.out}")
 
 

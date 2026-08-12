@@ -40,6 +40,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import (grouped_split, output_matrix,  # noqa: E402
                                      ridge_fit, ridge_pred, select_k)
@@ -183,7 +185,15 @@ def main():
     print("   and measurement noise is a larger share of it. Compare internal")
     print("   against output within a column, never across columns.")
 
-    Path(a.out).write_text(json.dumps(out, indent=2, default=float))
+    pi_archive.write_result(a.out, out, protocol=pi_protocol.protocol(
+        script="analyze_bw.py",
+        design="within-assay, position-grouped splits; held-out performance "
+               "decomposed into a between-position and a within-position part, "
+               "because a probe that knows which SITES are fragile is a weaker "
+               "claim than one that knows what a MUTATION does",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("per-block; see 'blocks'", 128),
+        source=a.glob, n_assays=len(names), seeds=a.seeds, frac=a.frac))
     print(f"\nwrote {a.out}")
 
 

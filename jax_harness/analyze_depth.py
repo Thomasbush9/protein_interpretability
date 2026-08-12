@@ -35,6 +35,8 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from analyze_xmodel import block_perm, cka, rdm  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
@@ -161,7 +163,15 @@ def main():
           ", ".join(f"{m} {best[m]:.3f}" for m in MODELS))
     res["peak_fraction"] = {m: float(v) for m, v in best.items()}
 
-    Path(a.out).write_text(json.dumps(res, indent=2, default=float))
+    pi_archive.write_result(a.out, res, protocol=pi_protocol.protocol(
+        script="analyze_depth.py",
+        design="cross-model at MATCHED RELATIVE DEPTH, not at the last layer; "
+               "the trunks are 64, 48 and 16 blocks deep and comparing their "
+               "final layers is what produced the earlier unexplained asymmetry",
+        layer=pi_protocol.layers("relative-depth grid", n_layers=max(nL.values())),
+        features=pi_protocol.features("z at the matched layer", 128),
+        source=a.dir, n_assays=len(names), n_layers_per_model=nL,
+        seeds=a.seeds, frac=a.frac_split))
     print(f"\nwrote {a.out}")
 
 
