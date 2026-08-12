@@ -78,6 +78,8 @@ import jax.numpy as jnp  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
+import pi_basis  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import grouped_split  # noqa: E402
 
@@ -234,7 +236,21 @@ def main():
     print(f"batched ridge vs numpy reference: max abs difference "
           f"{np.abs(_gpu - _ref).max():.3e}\n")
 
-    res = {"protocol": {"block": a.block, "n_layers": L, "dim": D, "ks": ks,
+    res = {"protocol": {**pi_protocol.protocol(
+               script="analyze_svd.py",
+               design="within-assay, position-grouped splits",
+               layer=pi_protocol.layers("pooled window for the reported curves",
+                                        n_layers=L, window=8),
+               features=pi_protocol.features(a.block, D),
+               source=a.glob, n_assays=len(names),
+               n_train_rows_per_assay="~%d of %d variants" % (
+                   int(round(len(A[names[0]]["X"]) * (1 - a.frac))),
+                   len(A[names[0]]["X"])),
+               note="The plotted curves are the MEAN OF THE LAST 8 LAYERS, not "
+                    "a single layer; the per-layer surface is in the .npz. A "
+                    "number from here is not comparable to a final-layer "
+                    "number without accounting for that."),
+           "block": a.block, "n_layers": L, "dim": D, "ks": ks,
                         "seeds": a.seeds, "frac": a.frac, "n_perm": a.n_perm,
                         "angle_k": a.angle_k, "assays": names,
                         "spearman_delta": abs(gpu_rho - cpu_rho)}}
@@ -532,14 +548,17 @@ def main():
     print("\n=== component annotation on a SHARED basis, last layer, top 8 ===\n")
     SCAL = ["kl_glob", "kl_site", "dmu_glob", "dsd_glob", "shift_glob", "spread_glob"]
 
-    def zc(M):
-        return (M - M.mean(0)) / (M.std(0) + EPS)
-
-    Xg = np.concatenate([zc(np.asarray(A[n]["X"])[:, -1, :]) for n in names], 0)
-    Vg = np.asarray(basis_of(jnp.asarray(Xg)[None], center=True)[0][0][:8])  # (8, D)
+    # This is the SHARED basis -- the same object analyze_heldout and
+    # analyze_pc2 build -- so it goes through pi_basis, not through basis_of.
+    # basis_of stays the primitive for the per-assay per-layer curves above,
+    # which are a different object: fitted without pooling, so their
+    # components have no shared orientation and cannot be named.
+    Bg = pi_basis.fit({n: np.asarray(A[n]["X"])[:, -1, :] for n in names},
+                      layer=-1, orient_on=None, n_pc=8, eps=EPS)
+    Vg = Bg.components                                                  # (8, D)
     ann = {}
     for n in names:
-        P = (zc(np.asarray(A[n]["X"])[:, -1, :]) - Xg.mean(0)) @ Vg.T       # (N, 8)
+        P = Bg.project(np.asarray(A[n]["X"])[:, -1, :], layer=-1)       # (N, 8)
         cols = {"DMS": A[n]["y"]}
         for s in SCAL:
             if s in A[n]:
@@ -600,7 +619,8 @@ def main():
     print("\n=== leave-one-assay-out on a shared basis (last 8 layers) ===\n")
     LK = [1, 2, 4, 8, 16, 32, min(64, D), D]
     LK = sorted({k for k in LK if k <= D})
-    Zg = {n: zc(np.asarray(A[n]["X"])[:, -8:, :]) for n in names}      # (N,8,D)
+    Zg = {n: pi_basis.standardise(np.asarray(A[n]["X"])[:, -8:, :])
+          for n in names}                                               # (N,8,D)
     yz = {n: (A[n]["y"] - A[n]["y"].mean()) / (A[n]["y"].std() + EPS) for n in names}
     loao = {k: {} for k in LK}
     for h in names:

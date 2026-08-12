@@ -143,6 +143,18 @@ def _standardise(X, center, mu=None, sd=None, eps=EPS, zscore=True):
     return (X - mu) / sd
 
 
+def standardise(X, center=True, eps=EPS):
+    """The former `zc`, public, for callers that standardise without fitting.
+
+    Standardisation runs along axis 0, so this also accepts an (N, L, D) stack
+    and standardises each (layer, channel) independently -- which is what
+    analyze_svd's vectorised leave-one-assay-out block needs. That block feeds
+    `basis_of` under vmap for GPU throughput and should not become one fit per
+    layer; it just should not carry its own copy of the formula either.
+    """
+    return _standardise(X, center, eps=eps)
+
+
 def _slice(A, layer):
     """(n, L, D) -> (n, D), or pass a 2-D block through.
 
