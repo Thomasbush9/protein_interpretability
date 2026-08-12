@@ -50,6 +50,7 @@ import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_basis  # noqa: E402
 import pi_stats  # noqa: E402
 
 EPS = 1e-8
@@ -59,12 +60,29 @@ def zc(M):
     return (M - M.mean(0)) / (M.std(0) + EPS)
 
 
-def basis_at(layers_by_assay, li, n_pc):
-    """The shared basis at layer li, by analyze_pc2's protocol exactly."""
-    Xg = np.concatenate([zc(A[:, li, :]) for A in layers_by_assay], 0)
-    gm = Xg.mean(0)
-    _, _, Vt = np.linalg.svd(Xg - gm, full_matrices=False)
-    return Vt[:n_pc], gm
+def basis_at(layers_by_assay, li, n_pc, KL=None, n_boot=500):
+    """The shared basis at layer li, through pi_basis.
+
+    The docstring this replaces said "by analyze_pc2's protocol exactly" and
+    the function did NOT orient at all -- orientation lived only in the --npz
+    writer below, and there it used n_boot=500 against analyze_pc2's 2000. Two
+    bootstrap sizes can disagree on the sign of a near-zero correlation, and
+    this is the file that writes basis_depth.npz. Pass KL to orient; the
+    bootstrap size is now an argument instead of a number in one branch.
+
+    The full (n, L, dim) block goes in rather than a pre-sliced one, so `li` is
+    a layer pi_basis MEASURES rather than one this function asserts.
+    """
+    blocks = {str(i): A for i, A in enumerate(layers_by_assay)}
+    kw = dict(layer=li, n_pc=n_pc, eps=EPS)
+    if KL is None:
+        B = pi_basis.fit(blocks, orient_on=None, **kw)
+    else:
+        B = pi_basis.fit(blocks, orient_on="kl_glob", orient_k=n_pc,
+                         n_boot=n_boot,
+                         orient_ref={str(i): K[:, li] for i, K in enumerate(KL)},
+                         **kw)
+    return B.components, B.gm
 
 
 def princ(A, B):
@@ -172,16 +190,8 @@ def main():
         SD = np.zeros((len(names), L, dim))
         GM = np.zeros((L, dim))
         for li in range(L):
-            V, gm = basis_at(DZ, li, a.n_pc)
+            V, gm = basis_at(DZ, li, a.n_pc, KL=KL, n_boot=500)
             GM[li] = gm
-            for c in range(a.n_pc):
-                g = {}
-                for ai, nm in enumerate(names):
-                    P = (zc(DZ[ai][:, li, :]) - gm) @ V[c]
-                    g[nm] = [pi_stats.spearman(P, KL[ai][:, li])]
-                m = pi_stats.cluster_bootstrap(g, n_boot=500, seed=0,
-                                               hierarchical=False)[0]
-                V[c] = V[c] * (1.0 if m >= 0 else -1.0)
             Vout[li] = V
             for ai in range(len(names)):
                 SD[ai, li] = DZ[ai][:, li, :].std(0)

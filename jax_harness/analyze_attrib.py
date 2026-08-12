@@ -47,6 +47,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
+import pi_basis  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import (grouped_split, ridge_fit,  # noqa: E402
                                      ridge_pred)
@@ -107,21 +108,19 @@ def main():
     names = sorted(A)
     print(f"{len(names)} assays\n")
 
-    # shared, oriented basis -- identical construction to the report
-    Xg = np.concatenate([zc(A[n]["X"]) for n in names], 0)
-    gm = Xg.mean(0)
-    V = np.linalg.svd(Xg - gm, full_matrices=False)[2][:N_PC]
-    for c in range(N_PC):
-        g = {n: [pi_stats.spearman((zc(A[n]["X"]) - gm) @ V[c], A[n]["kl"])]
-             for n in names}
-        if pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
-                                      hierarchical=False)[0] < 0:
-            V[c] = -V[c]
+    # shared, oriented basis. The comment this replaces said "identical
+    # construction to the report", which was the only thing keeping the two in
+    # agreement -- and was not true of analyze_chem's LOAO block. It is now
+    # the same call, so agreement is a fact rather than a claim.
+    B = pi_basis.fit({n: A[n]["X"] for n in names}, layer=-1,
+                     orient_on="kl_glob",
+                     orient_ref={n: A[n]["kl"] for n in names},
+                     orient_k=N_PC, n_pc=N_PC, eps=EPS)
     for n in names:
-        P = (zc(A[n]["X"]) - gm) @ V.T
+        P = B.project(A[n]["X"], layer=-1)
         A[n]["p2"] = (P[:, 1] - P[:, 1].mean()) / (P[:, 1].std() + EPS)
 
-    res = {"assays": names}
+    res = {"assays": names, "protocol": dict(B.protocol)}
 
     # ---------------------------------------------------------------- 1
     print("1. Mean PC2 by residue (z-scored within assay, pooled)\n")

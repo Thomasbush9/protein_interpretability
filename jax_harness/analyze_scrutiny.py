@@ -42,6 +42,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pi_chem  # noqa: E402
+import pi_basis  # noqa: E402
 import pi_stats  # noqa: E402
 
 EPS = 1e-9
@@ -86,26 +87,28 @@ def main():
         the wild-type anchor in the data the standardisation here has to be
         SCALE ONLY, so the mean of dz -- which is what carries the reference --
         survives into the decomposition.
-        """
-        if center:
-            Xg = np.concatenate([zc(A[n]["X"]) for n in names], 0)
-            gm = Xg.mean(0)
-        else:
-            Xg = np.concatenate([A[n]["X"] / (A[n]["X"].std(0) + EPS)
-                                 for n in names], 0)
-            gm = np.zeros(Xg.shape[1])
-        V = np.linalg.svd(Xg - gm, full_matrices=False)[2][:N_PC]
-        for c in range(N_PC):
-            g = {n: [pi_stats.spearman((zc(A[n]["X"]) - gm) @ V[c], A[n]["kl"])]
-                 for n in names}
-            if pi_stats.cluster_bootstrap(g, n_boot=2000, seed=0,
-                                          hierarchical=False)[0] < 0:
-                V[c] = -V[c]
-        return gm, V
 
-    gm, V = basis(True)
+        Scale-only standardisation is `center=False` in pi_basis, which is one
+        flag rather than a second construction -- the control and the thing it
+        controls for have to be provably the same code or the check has no
+        force.
+
+        The previous version oriented the uncentred branch on `zc(X)` while
+        fitting it on `X/std`. Those differ by a per-assay constant and
+        Spearman does not see a constant shift, so the sign decision was
+        unaffected -- but the basis and its orientation were standardised
+        differently, which nothing said.
+        """
+        return pi_basis.fit({n: A[n]["X"] for n in names}, layer=-1,
+                            center=center, orient_on="kl_glob",
+                            orient_ref={n: A[n]["kl"] for n in names},
+                            orient_k=N_PC, n_pc=N_PC, eps=EPS)
+
+    B = basis(True)
+    gm, V = B.gm, B.components
+    res["protocol"] = dict(B.protocol)
     for n in names:
-        A[n]["P"] = (zc(A[n]["X"]) - gm) @ V.T
+        A[n]["P"] = B.project(A[n]["X"], layer=-1)
 
     # =================================================================== 1
     print("1. One ranking across proteins vs twelve rankings within them\n")
@@ -139,7 +142,8 @@ def main():
 
     # =================================================================== 2
     print("2. Is the direction an artifact of anchoring on wild type?\n")
-    gm0, V0 = basis(False)
+    B0 = basis(False)
+    gm0, V0 = B0.gm, B0.components
     s = np.linalg.svd(V @ V0.T, compute_uv=False)
     ang = float((s ** 2).mean())
     pc2_unc = np.concatenate([((A[n]["X"] / (A[n]["X"].std(0) + EPS)) @ V0.T)[:, 1]
