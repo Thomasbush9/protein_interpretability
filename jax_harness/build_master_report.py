@@ -904,11 +904,14 @@ def main():
     stale += [f for f, _ in borrowed_stale]
     manifest = R.archive_inputs(OUT, resolved, stale, CODE)
 
-    TR, BW = R.load(a.transfer), R.load(a.bw)
-    HO, DP = R.load(a.heldout), R.load(a.depth)
-    XM, SV = R.load(a.xmodel), R.load(a.svd)
-    ST, JP = R.load(a.steer), R.load(a.jac)
-    GP, RT = R.load(a.gate), R.load(a.rotate)
+    # quoted=True marks an input this page STATES a number from. Those raise
+    # if they carry no protocol block rather than rendering an unattributable
+    # claim; anything else loads and is listed by R.provenance_notice().
+    TR, BW = R.load(a.transfer, quoted=True), R.load(a.bw, quoted=True)
+    HO, DP = R.load(a.heldout, quoted=True), R.load(a.depth, quoted=True)
+    XM, SV = R.load(a.xmodel, quoted=True), R.load(a.svd, quoted=True)
+    ST, JP = R.load(a.steer, quoted=True), R.load(a.jac, quoted=True)
+    GP, RT = R.load(a.gate, quoted=True), R.load(a.rotate, quoted=True)
     BA = R.load(a.basis)
     CH, SC = R.load(a.chem), R.load(a.scrutiny)
     TI, XI = R.load(a.transfer_ind), R.load(a.xio)

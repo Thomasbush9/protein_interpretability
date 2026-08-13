@@ -42,11 +42,70 @@ def sha256(p: Path) -> str:
     return h.hexdigest()
 
 
-def load(p):
+UNLABELLED = []      # inputs loaded without a protocol block, for the page
+UNREADABLE = []      # inputs that could not be parsed at all
+
+
+def load(p, *, quoted=False):
+    """Load an input, refusing one that a page QUOTES but cannot interpret.
+
+    The previous version swallowed every exception and returned None, so a
+    missing file, a corrupt file and a fine one were indistinguishable at the
+    call site and the page rendered either way.
+
+    `quoted=True` marks an input supplying a number the page STATES. Those
+    fail hard, because a sentence built on an archive whose layer convention,
+    orientation rule and truncation are unknown is exactly the situation that
+    took a session to untangle -- the 0.573 / 0.696 / 0.703 / 0.731 / 0.758
+    spread was five numbers that could not be compared without opening five
+    files and reading prose.
+
+    Everything else loads and is recorded in UNLABELLED, which the page shows.
+    A build that cannot run is a build someone switches the guard off for, so
+    only the quoted path is fatal.
+    """
+    path = Path(p)
     try:
-        return json.loads(Path(p).read_text())
-    except Exception:
+        d = json.loads(path.read_text())
+    except Exception as e:
+        UNREADABLE.append((path.name, str(e)[:80]))
+        if quoted:
+            raise ValueError(
+                f"{path.name} supplies a quoted number and could not be read: "
+                f"{e}") from e
         return None
+    ok = isinstance(d, dict) and bool(d.get("protocol", {}).get("script"))
+    if not ok:
+        UNLABELLED.append(path.name)
+        if quoted:
+            raise ValueError(
+                f"{path.name} supplies a number this page states, and carries "
+                f"no protocol block -- so nothing records which layer, which "
+                f"split design, or how wide the predictor was before "
+                f"truncation. Rerun it through pi_archive.write_result, or "
+                f"drop the claim that reads it. Do NOT hand-write a block: an "
+                f"inferred protocol is indistinguishable from a recorded one "
+                f"afterwards.")
+    return d
+
+
+def provenance_notice():
+    """HTML for whatever loaded without a block. Empty when everything did."""
+    if not UNLABELLED and not UNREADABLE:
+        return ""
+    rows = "".join(f"<li><code>{n}</code></li>" for n in sorted(set(UNLABELLED)))
+    bad = "".join(f"<li><code>{n}</code> &mdash; {e}</li>" for n, e in UNREADABLE)
+    return f"""
+<section id=provenance-gaps>
+<div class="card warn">
+<h3>Inputs on this page that do not say what they are</h3>
+<p>These loaded without a protocol block, so the file itself does not record
+which layer, which split design, or how wide the predictor was before any
+truncation. Nothing here supplies a number the page states &mdash; that case
+raises instead of rendering.</p>
+<ul>{rows}{bad}</ul>
+</div>
+</section>"""
 
 
 def check_figures(out: Path, figspec, resolved, allow_stale=False):

@@ -49,6 +49,12 @@ from pathlib import Path
 
 import numpy as np
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
+
 EPS = 1e-8
 
 
@@ -212,7 +218,14 @@ def main():
         "capture_last_layer": {s: cap[s].tolist() for s in cap},
         "ks": ks.tolist(),
     }
-    Path(a.out).write_text(json.dumps(out, indent=2, default=float))
+    pi_archive.write_result(a.out, out, protocol=pi_protocol.protocol(
+        script="analyze_jac.py",
+        design="pooled over per-assay Jacobians of the z-path at the operating "
+               "point; subspace agreement measured across folds, not fitted",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("Jacobian of transition_z, channel space",
+                                      128),
+        source=a.glob, n_assays=len(names), subspace_k=a.k, seed=a.seed))
     print(f"\nwrote {a.out}")
 
 

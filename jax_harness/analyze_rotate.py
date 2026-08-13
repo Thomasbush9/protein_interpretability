@@ -57,6 +57,12 @@ from pathlib import Path
 
 import numpy as np
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
+
 EPS = 1e-8
 
 
@@ -206,7 +212,7 @@ def main():
               "operator\nof its own spectrum would -- the rotation is "
               "accounted for by size and\nshape, not by direction.")
 
-    Path(a.out).write_text(json.dumps({
+    _res = {
         "assays": names, "ops": ops, "layers": L, "k": k,
         "closure_mean": float(closure[:, 1:].mean()),
         "closure_where_rotating": cl_big,
@@ -225,7 +231,16 @@ def main():
         "layer_predicted": layer_pred.mean(0).tolist(),
         "closure_by_layer": closure.mean(0).tolist(),
         "early_mean": float(early), "late_mean": float(late),
-    }, indent=2, default=float))
+    }
+    pi_archive.write_result(a.out, _res, protocol=pi_protocol.protocol(
+        script="analyze_rotate.py",
+        design="per-operation rotation attribution against a spectrum-matched "
+               "null; directions enter as raw-space vectors e = s*v, the same "
+               "bridge pi_basis.to_raw applies",
+        layer=pi_protocol.layers("all", n_layers=L),
+        features=pi_protocol.features("per-layer basis directions", 128,
+                                      kept=a.k),
+        source=a.glob, n_assays=len(names), basis=a.basis, n_random=a.n_rand))
     print(f"\nwrote {a.out}")
 
 

@@ -37,6 +37,8 @@ import numpy as np
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_core as pi  # noqa: E402
 
 EPS = 1e-8
@@ -106,12 +108,19 @@ def main():
     c = np.corrcoef(live.mean(-1).ravel(), rank.mean(-1).ravel())[0, 1]
     print(f"  correlation across (assay, layer): r = {c:.3f}")
 
-    Path(a.out).write_text(json.dumps({
+    _res = {
         "assays": names,
         "live_by_layer": live.mean((0, 2)).tolist(),
         "rank_by_layer": rank.mean((0, 2)).tolist(),
         "live_mean": float(live.mean()), "rank_mean": float(rank.mean()),
-        "corr": float(c)}, indent=2))
+        "corr": float(c)}
+    pi_archive.write_result(a.out, _res, protocol=pi_protocol.protocol(
+        script="probe_gate.py",
+        design="descriptive: how many SwiGLU units are live at the operating "
+               "point, and whether that count tracks the perturbation",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("SwiGLU hidden units", 512),
+        source=a.glob, n_assays=len(names)))
     print(f"\nwrote {a.out}")
 
 
