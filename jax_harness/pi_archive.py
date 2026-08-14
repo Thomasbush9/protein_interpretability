@@ -49,12 +49,14 @@ be confused.
 
 from __future__ import annotations
 
+import dataclasses  # noqa: F401
 import hashlib
 import json
 import os
 import socket
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -255,3 +257,173 @@ def stamp_reconstructed(path, *, dry_run=True):
     if not dry_run:
         p.write_text(json.dumps(d, indent=2, default=float))
     return True
+
+
+# ==========================================================================
+# Reading a capture: what the archive IS, not what its filename suggests
+# ==========================================================================
+# `dz_site` is (n, L, 128) pair-row VECTORS in gym2/gym2s/gym3/gym3p3 and
+# (n, L) per-layer NORMS in deep2/xm. In xm the norms sit in the same file as
+# the vectors, under `dz_vec`. Nothing checked, and 96 raw reads across 35
+# scripts each carried an unstated assumption about which one they had.
+#
+# The cost is on record. The multi-model section of the master report was built
+# on the norm family and was STRUCTURALLY INCAPABLE of the comparison it
+# claimed: a probe on norms sees how far the pair row moved and never which
+# way. It returned +0.468 against the +0.61 the same model reaches when the
+# direction is available -- a plausible number, low enough to read as an honest
+# negative result about Boltz-2. It was caught by reasoning about the archive,
+# not by anything the code did.
+#
+# One correction to how this was first described. `analyze_gym_deep.py:115`
+#     v = np.linalg.norm(v, axis=-1) if v.ndim == 3 else v
+# looks like that failure and is NOT: its comment states the reason -- the
+# models store different things, and reducing both to a magnitude stops one
+# contributing C times as many columns. It is a magnitude comparison on
+# purpose. The danger is only that the expression is silent about intent, so
+# the same line copied without its comment would be indistinguishable from an
+# accident. `magnitudes()` says the intent out loud and does the same thing.
+#
+# So `pair_row()` RAISES on a norm-only archive rather than returning norms,
+# and `magnitudes()` is always available because it is derivable from either.
+
+VECTOR_FAMILIES = ("gym2", "gym2s", "gym3", "gym3p3")
+NORM_FAMILIES = ("deep2",)
+BOTH_FAMILIES = ("xm",)
+
+
+def _family_of(path):
+    stem = Path(path).stem
+    for fam in ("gym3p3", "gym2s", "gym3", "gym2", "deep2", "xm"):
+        if stem.startswith(fam + "_"):
+            return fam
+    return None
+
+
+@dataclass
+class Capture:
+    """A capture archive that knows what it holds.
+
+    The filename is recorded as `family` but never trusted: every accessor
+    checks the array it actually loaded, so a file renamed into the wrong
+    family fails on the shape rather than on the name.
+    """
+
+    path: Path
+    family: str
+    files: tuple
+    _z: object = field(repr=False, default=None)
+
+    def has_vectors(self):
+        for k in ("dz_vec", "dz_site"):
+            if k in self.files and self._arr(k).ndim == 3:
+                return True
+        return False
+
+    def pair_row(self, layer, key="dz"):
+        """(n, 128) at `layer`. Raises if this archive holds only norms.
+
+        float64 on the way out. The archives are float32 and analyze_pc2 fed
+        that straight to numpy, so pc2_v2.npz -- the basis six analyses
+        inherit -- was computed in single precision for a week.
+        """
+        for k in (f"{key}_vec", f"{key}_site"):
+            if k in self.files and self._arr(k).ndim == 3:
+                return np.asarray(self._arr(k)[:, layer, :], np.float64)
+        shape = self._arr(f"{key}_site").shape if f"{key}_site" in self.files else "?"
+        raise ValueError(
+            f"{self.path.name} (family {self.family!r}) stores {key}_site as "
+            f"{shape} -- per-layer NORMS, not vectors. A direction cannot be "
+            f"recovered from a magnitude. Use magnitudes(), or read a family "
+            f"that carries {key}_vec: {', '.join(BOTH_FAMILIES + VECTOR_FAMILIES)}.")
+
+    def magnitudes(self, key="dz"):
+        """(n, L) per-layer norms, from whichever representation exists."""
+        a = self._arr(f"{key}_site")
+        return np.asarray(np.linalg.norm(a, axis=-1) if a.ndim == 3 else a,
+                          np.float64)
+
+    def rows(self, layer_index, key="dz"):
+        """(n, R, 128) per-residue rows, for the families that captured them."""
+        if f"{key}_row" not in self.files:
+            raise ValueError(f"{self.path.name} has no {key}_row; only "
+                             f"gym3/gym3p3 captured per-residue rows.")
+        return np.asarray(self._arr(f"{key}_row")[:, layer_index], np.float64)
+
+    def _arr(self, k):
+        if k not in self.files:
+            raise KeyError(f"{self.path.name} has no {k!r}; it holds "
+                           f"{', '.join(sorted(self.files)[:8])}")
+        return self._z[k]
+
+    def field(self, k, dtype=None):
+        """A field this type does not interpret. Raises if absent."""
+        a = self._arr(k)
+        return np.asarray(a, dtype) if dtype is not None else a
+
+    def get(self, k, default=None, dtype=None):
+        """An OPTIONAL field. Captures differ in what they carry -- model,
+        capture_drift and signal_to_drift are present in some families and not
+        others -- and `k in cap` is the honest way to ask rather than reaching
+        past the interface into the npz."""
+        if k not in self.files:
+            return default
+        a = self._arr(k)
+        return np.asarray(a, dtype) if dtype is not None else a
+
+    def __contains__(self, k):
+        return k in self.files
+
+    @property
+    def n_layers(self):
+        return int(self._arr("dz_site").shape[1])
+
+    def describe(self):
+        return {"path": str(self.path), "family": self.family,
+                "vectors": self.has_vectors(),
+                "arrays": {k: {"shape": list(self._arr(k).shape),
+                               "dtype": str(self._arr(k).dtype)}
+                           for k in self.files
+                           if k.startswith(("dz", "ds"))}}
+
+
+def load_capture(path, *, require_vectors=False):
+    """Open a capture, optionally refusing a norm-only archive up front."""
+    p = Path(path)
+    z = np.load(p, allow_pickle=True)
+    cap = Capture(path=p, family=_family_of(p), files=tuple(z.files), _z=z)
+    if require_vectors and not cap.has_vectors():
+        raise ValueError(
+            f"{p.name} holds per-layer norms only, and this analysis needs "
+            f"directions. Running it on norms is what produced the +0.468 "
+            f"cross-model result no probe on that archive could have improved.")
+    side = p.with_suffix(".meta.json")
+    if side.exists():
+        rec = json.loads(side.read_text()).get("arrays", {})
+        for k, want in rec.items():
+            if k in cap.files and list(cap._arr(k).shape) != want["shape"]:
+                raise ValueError(
+                    f"{p.name}: {k} is {list(cap._arr(k).shape)} but its "
+                    f"sidecar records {want['shape']}. The file and its "
+                    f"metadata disagree; do not use either until you know why.")
+    return cap
+
+
+def write_capture_sidecar(path, *, dry_run=False):
+    """Record an existing capture's shapes beside it, without rewriting 12 GB.
+
+    The captures cost GPU-hours each and are the one thing here that cannot be
+    regenerated cheaply, so they are not touched. The sidecar carries what
+    `write_npz` would have embedded, and `load_capture` cross-checks it, so a
+    later mismatch between file and metadata is detectable rather than silent.
+    """
+    p = Path(path)
+    cap = load_capture(p)
+    meta = {**cap.describe(), "inferred": True,
+            "note": "Written after the fact from the arrays themselves. "
+                    "Measurements, not a record of how the capture was made.",
+            "file": {"bytes": p.stat().st_size, "sha256": sha256(p)},
+            "recorded": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+    if not dry_run:
+        p.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
+    return meta

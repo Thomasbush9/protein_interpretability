@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
 import geom  # noqa: E402
 import pi_stats  # noqa: E402
 from analyze_gym_multi import grouped_split, ridge_fit, ridge_pred  # noqa: E402
@@ -95,24 +96,28 @@ def main():
     for f in sorted(glob.glob(args.glob)):
         if "smoke" in f:
             continue
-        d = np.load(f, allow_pickle=True)
-        model = str(d["model"]) if "model" in d.files else "boltz2"
-        assay = str(d["assay"]) if "assay" in d.files else Path(f).stem
-        y, pos = d["score"], d["pos"]
-        nL = int(d["n_layers"])
+        cap = pi_archive.load_capture(f)
+        model = str(cap.get("model", "boltz2"))
+        assay = str(cap.get("assay", Path(f).stem))
+        y, pos = cap.field("score"), cap.field("pos")
+        nL = int(cap.field("n_layers"))
         meta[model] = nL
-        variants[assay][model] = tuple(str(m) for m in d["mutant"])
+        variants[assay][model] = tuple(str(m) for m in cap.field("mutant"))
         fidelity[model] = (
-            float(d["capture_drift"]) if "capture_drift" in d.files else None,
-            float(d["signal_to_drift"]) if "signal_to_drift" in d.files else None)
+            cap.get("capture_drift"), cap.get("signal_to_drift"))
 
         # Boltz-2's exp_gym2 stores dz_site/ds_site as full vectors [n, L, C];
         # exp_gym_deep stores their norms [n, L]. Reduce to the same quantity
         # rather than letting one model contribute C times as many columns.
         blocks = []
         for b in BLOCKS:
-            v = d[b]
-            v = np.linalg.norm(v, axis=-1) if v.ndim == 3 else v   # [n, nL]
+            # magnitudes() is this reduction named. The models store different
+            # things -- vectors here, norms there -- and comparing them at all
+            # requires collapsing to the common quantity; doing that inline as
+            # `norm(v) if v.ndim == 3 else v` was correct but silent about
+            # whether it was a choice or a coincidence of shapes.
+            v = (cap.magnitudes(key=b.split("_")[0]) if b.endswith("_site")
+                 else cap.field(b, np.float64))
             if args.match_depth:
                 # Trunk depths differ (64 / 48 / 16), so "every layer" gives the
                 # models different feature counts. Reading the same number of
@@ -124,7 +129,7 @@ def main():
                 v = np.stack([np.interp(dst, src, row) for row in v])
             blocks.append(v)
         X = np.concatenate(blocks, axis=1)                      # [n, 4*depth]
-        caw = d["ca_wt"].astype(float)
+        caw = cap.field("ca_wt", float)
         # TM needs `tmtools`, which is not in the analysis container. Rather
         # than substitute a different metric under the same name -- a silent
         # way to publish a number nobody computed -- TM is dropped when the
@@ -133,13 +138,13 @@ def main():
         # it is the model's OWN uncertainty head, which is the objection a
         # referee raises first.
         try:
-            tm = np.array([geom.tm_score(c.astype(float), caw) for c in d["ca"]])
+            tm = np.array([geom.tm_score(c.astype(float), caw) for c in cap.field("ca")])
         except ModuleNotFoundError as e:
             if not TM_WARNED:
                 print(f"   NOTE: TM unavailable ({e.name} not installed) -- "
                       f"TM columns will be NaN; pLDDT comparisons still run")
                 TM_WARNED.append(1)
-            tm = np.full(len(d["ca"]), np.nan)
+            tm = np.full(len(cap.field("ca")), np.nan)
         pl = d["plddt_mean"] if "plddt_mean" in d.files else d["plddt"]
         pl = pl.mean(-1) if pl.ndim > 1 else pl
 
