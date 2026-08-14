@@ -93,7 +93,7 @@ def main():
     TM = np.load(a.tm_cache)
     A = {}
     for f in a.features:
-        d = np.load(f, allow_pickle=True)
+        d = pi_archive.load_capture(f)
         # `.replace("gym2_", "")` silently collapsed every gym2s_* file to the
         # single key "gym2s", leaving one assay in the dict. Split on position.
         name = Path(f).stem.split("_")[1]
@@ -116,7 +116,7 @@ def main():
         raw = {
             "internal": np.concatenate(
                 [d["kl_glob"], d["kl_site"],
-                 np.linalg.norm(d["dz_site"], axis=-1),
+                 d.magnitudes(),
                  np.linalg.norm(d["ds_site"], axis=-1)], axis=1),
             # The 128 pair channels at the final layer -- the DIRECTION, not
             # just how far the row moved. `internal` above feeds dz_site in as

@@ -107,22 +107,22 @@ def main():
     A = {}
     for f in sorted(glob.glob(a.glob)):
         stem = Path(f).stem.split("_", 1)[1]
-        d = np.load(f, allow_pickle=True)
-        y, pos = np.asarray(d["score"], float), np.asarray(d["pos"])
-        rich = output_matrix(d["ca"], np.asarray(d["ca_wt"], float),
-                             np.asarray(TM[stem], float), d["plddt"],
-                             d["plddt_site"], pos)
-        dpl = (np.asarray(d["plddt_res"], float)
-               - np.asarray(d["plddt_res_wt"], float))
+        cap = pi_archive.load_capture(f)
+        y, pos = np.asarray(cap.field("score"), float), np.asarray(cap.field("pos"))
+        rich = output_matrix(cap.field("ca"), np.asarray(cap.field("ca_wt"), float),
+                             np.asarray(TM[stem], float), cap.field("plddt"),
+                             cap.field("plddt_site"), pos)
+        dpl = (np.asarray(cap.field("plddt_res"), float)
+               - np.asarray(cap.field("plddt_res_wt"), float))
         A[stem.split("_")[0]] = {
             "y": y, "pos": pos,
             "blocks": {
                 "internal dz (128, one layer)":
-                    np.asarray(d["dz_site"], float)[:, -1, :],
+                    cap.pair_row(-1),
                 "output pLDDT + rich": np.column_stack([dpl, rich]),
                 "output rich (published, 10)": rich,
                 "substitution chemistry (17)":
-                    pi_chem.chem_matrix([str(m) for m in d["mutant"]]),
+                    pi_chem.chem_matrix([str(m) for m in cap.field("mutant")]),
             }}
     names = sorted(A)
     BN = list(A[names[0]]["blocks"])

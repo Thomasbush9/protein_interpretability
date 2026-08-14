@@ -66,9 +66,9 @@ def main():
     for asy in assays:
         for m in MODELS:
             f = Path(a.dir) / f"xm_{m}_r1_{asy}.npz"
-            d = np.load(f, allow_pickle=True)
+            d = pi_archive.load_capture(f)
             D[(asy.split("_")[0], m)] = {
-                "z": np.asarray(d["dz_vec"], float),          # (n, L, C)
+                "z": np.asarray(d.field("dz_vec"), float),          # (n, L, C)
                 "y": np.asarray(d["score"], float),
                 "pos": np.asarray(d["pos"])}
     names = sorted({k[0] for k in D})

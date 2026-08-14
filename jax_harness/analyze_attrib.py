@@ -93,15 +93,15 @@ def main():
 
     A = {}
     for f in sorted(glob.glob(a.glob)):
-        d = np.load(f, allow_pickle=True)
-        muts = [str(m) for m in d["mutant"]]
+        cap = pi_archive.load_capture(f)
+        muts = [str(m) for m in cap.field("mutant")]
         wt_aa, mu_aa = zip(*[(pi_chem.parse(m)[0], pi_chem.parse(m)[2])
                              for m in muts])
         A[Path(f).stem.split("_", 1)[1].split("_")[0]] = {
-            "X": np.asarray(d["dz_site"], float)[:, -1, :],
-            "y": np.asarray(d["score"], float),
-            "pos": np.asarray(d["pos"]),
-            "kl": np.asarray(d["kl_glob"], float)[:, -1],
+            "X": cap.pair_row(-1),
+            "y": np.asarray(cap.field("score"), float),
+            "pos": np.asarray(cap.field("pos")),
+            "kl": np.asarray(cap.field("kl_glob"), float)[:, -1],
             "wt": [c or "X" for c in wt_aa], "mu": [c or "X" for c in mu_aa]}
     names = sorted(A)
     print(f"{len(names)} assays\n")

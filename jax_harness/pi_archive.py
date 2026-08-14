@@ -374,6 +374,21 @@ class Capture:
     def __contains__(self, k):
         return k in self.files
 
+    def __getitem__(self, k):
+        """`cap["score"]` reads like the npz it replaces.
+
+        This exists so a script can be moved onto the type by changing its
+        np.load line and nothing else. Rewriting every d["key"] by regex is
+        how analyze_heldout broke: the file also had a plain dict named `d`,
+        and the substitution could not tell them apart. A one-line change
+        cannot make that mistake, and nothing bypasses the type.
+        """
+        return self._arr(k)
+
+    @property
+    def files_(self):
+        return self.files
+
     @property
     def n_layers(self):
         return int(self._arr("dz_site").shape[1])

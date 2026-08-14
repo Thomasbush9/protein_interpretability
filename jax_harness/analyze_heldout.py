@@ -94,13 +94,13 @@ def short(name):
 
 
 def load_assay(f):
-    d = np.load(f, allow_pickle=True)
-    return {"X": np.asarray(d["dz_site"], float)[:, -1, :],
-            "y": np.asarray(d["score"], float),
-            "kl": np.asarray(d["kl_glob"], float)[:, -1],
-            "mutant": [str(m) for m in d["mutant"]],
-            "pos": np.asarray(d["pos"]),
-            "n_res": int(np.asarray(d["plddt_res"]).shape[1])}
+    cap = pi_archive.load_capture(f)
+    return {"X": cap.pair_row(-1),
+            "y": np.asarray(cap.field("score"), float),
+            "kl": np.asarray(cap.field("kl_glob"), float)[:, -1],
+            "mutant": [str(m) for m in cap.field("mutant")],
+            "pos": np.asarray(cap.field("pos")),
+            "n_res": int(np.asarray(cap.field("plddt_res")).shape[1])}
 
 
 def ridge_train(X, y, lam):

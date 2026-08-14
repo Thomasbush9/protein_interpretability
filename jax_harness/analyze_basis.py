@@ -102,9 +102,9 @@ def main():
         raise SystemExit(f"no files matched {a.glob}")
     names, DZ, KL = [], [], []
     for f in files:
-        d = np.load(f, allow_pickle=True)
+        d = pi_archive.load_capture(f)
         names.append(Path(f).stem.split("_", 1)[1].split("_")[0])
-        DZ.append(np.asarray(d["dz_site"], np.float64))
+        DZ.append(np.asarray(d.field("dz_site"), np.float64))
         KL.append(np.asarray(d["kl_glob"], np.float64))
     L, dim = DZ[0].shape[1], DZ[0].shape[2]
     print(f"{len(names)} assays: {', '.join(names)}")

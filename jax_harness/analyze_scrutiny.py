@@ -60,15 +60,15 @@ def main():
 
     A = {}
     for f in sorted(glob.glob(a.glob)):
-        d = np.load(f, allow_pickle=True)
+        cap = pi_archive.load_capture(f)
         A[Path(f).stem.split("_", 1)[1].split("_")[0]] = {
-            "X": np.asarray(d["dz_site"], float)[:, -1, :],
-            "y": np.asarray(d["score"], float),
-            "C": pi_chem.chem_matrix([str(m) for m in d["mutant"]]),
-            "kl": np.asarray(d["kl_glob"], float)[:, -1],
-            "dsd": np.asarray(d["dsd_glob"], float)[:, -1],
-            "spread": np.asarray(d["spread_glob"], float)[:, -1],
-            "shift": np.asarray(d["shift_glob"], float)[:, -1]}
+            "X": cap.pair_row(-1),
+            "y": np.asarray(cap.field("score"), float),
+            "C": pi_chem.chem_matrix([str(m) for m in cap.field("mutant")]),
+            "kl": np.asarray(cap.field("kl_glob"), float)[:, -1],
+            "dsd": np.asarray(cap.field("dsd_glob"), float)[:, -1],
+            "spread": np.asarray(cap.field("spread_glob"), float)[:, -1],
+            "shift": np.asarray(cap.field("shift_glob"), float)[:, -1]}
     names = sorted(A)
     print(f"{len(names)} assays, "
           f"{sum(len(A[n]['y']) for n in names)} variants total\n")

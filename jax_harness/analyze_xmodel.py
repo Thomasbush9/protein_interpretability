@@ -147,8 +147,8 @@ def main():
                 f = Path(a.dir) / f"xm_{m}_{run}_{asy}.npz"
                 if not f.exists():
                     continue
-                d = np.load(f, allow_pickle=True)
-                cell[(m, run)] = {"z": np.asarray(d["dz_vec"], float)[:, -1, :],
+                d = pi_archive.load_capture(f)
+                cell[(m, run)] = {"z": d.pair_row(-1),
                                   "y": np.asarray(d["score"], float),
                                   "pos": np.asarray(d["pos"]),
                                   "mut": [str(x) for x in d["mutant"]]}

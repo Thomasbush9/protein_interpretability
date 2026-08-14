@@ -74,7 +74,7 @@ def main():
             f = Path(a.dir) / f"xm_{m}_{a.run}_{asy}.npz"
             if not f.exists():
                 raise SystemExit(f"missing {f}")
-            d = np.load(f, allow_pickle=True)
+            d = pi_archive.load_capture(f)
             mut = [str(x) for x in d["mutant"]]
             # Identical variants across models, or the comparison is between
             # different experiments wearing the same label.
@@ -84,7 +84,7 @@ def main():
                     f"A cross-model row here would compare different mutations.")
             ref_mut.setdefault(asy, mut)
 
-            z = np.asarray(d["dz_vec"], float)              # (n, L, 128)
+            z = np.asarray(d.field("dz_vec"), float)              # (n, L, 128)
             nlay[m] = z.shape[1]
             drift[m] = (float(d["capture_drift"])
                         if "capture_drift" in d.files else None)
