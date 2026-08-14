@@ -35,7 +35,16 @@ import json
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
+
+# jax defaults to float32 and downcasts a float64 array on the way in
+# without saying so. That is not hypothetical here: pc2_v2.npz -- the PC
+# basis six analyses inherit -- was computed in single precision for a
+# week because analyze_pc2 passed float32 straight to numpy, and its
+# orthonormality was 1.06e-08 where float64 gives 3.11e-15. Rank
+# statistics hid it. x64 is enabled explicitly wherever this project
+# reduces through jnp.
+jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp  # noqa: E402
 import numpy as np
 
 import sys

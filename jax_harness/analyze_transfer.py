@@ -183,7 +183,9 @@ def main():
     # job holds a GPU either way and should use it.
     sweep = {}
     if a.k_sweep:
-        import jax, jax.numpy as jnp
+        import jax
+        jax.config.update("jax_enable_x64", True)
+        import jax.numpy as jnp
         print(f"\n   jax devices: {jax.devices()}", flush=True)
 
         @jax.jit
