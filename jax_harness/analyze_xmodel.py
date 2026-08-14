@@ -57,6 +57,8 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+import pi_archive  # noqa: E402
+import pi_protocol  # noqa: E402
 import pi_stats  # noqa: E402
 from compare_internal_output import fit_ridge_block, grouped_split  # noqa: E402
 
@@ -282,7 +284,17 @@ def main():
               f"[{lo:+.3f}, {hi:+.3f}]  {wins}/{len(names)}{flag}")
     res["complementarity"] = out_s
 
-    Path(a.out).write_text(json.dumps(res, indent=2, default=float))
+    pi_archive.write_result(a.out, res, protocol=pi_protocol.protocol(
+        script="analyze_xmodel.py",
+        design="within-assay, position-grouped splits; each model compared "
+               "against itself across two independent capture runs before any "
+               "cross-model claim, so replicate noise is not read as agreement",
+        layer=pi_protocol.layers("final"),
+        features=pi_protocol.features("per-model pair representation", 128),
+        source=a.dir, n_assays=len(assays), seeds=a.seeds, frac=a.frac,
+        n_perm=a.n_perm,
+        note="layer counts, distogram grids and alignment handling differ "
+             "between the three trunks, so this is not a ranking"))
     print(f"\nwrote {a.out}")
 
 
