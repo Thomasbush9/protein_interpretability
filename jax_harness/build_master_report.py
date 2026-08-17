@@ -33,10 +33,17 @@ FIGSPEC = {
     "causal.png": ("python fig_causal.py --steer {steer} --out {out}"),
     "xmodel_io.png": ("python fig_xmodel_io.py --xio {xio} --out {out}"),
 }
-CODE = ["build_master_report.py", "pi_report.py", "fig_headline.py",
-        "fig_causal.py", "analyze_transfer.py", "analyze_steer_pool.py",
-        "compare_internal_output.py", "analyze_pc2.py", "analyze_chem.py",
-        "analyze_xmodel_io.py", "fig_xmodel_io.py", "analyze_layer_match.py", "pi_protocol.py"]
+# Repo-relative since the promotion: the entry points are still in jax_harness,
+# the protocol module is not. Hashing `jax_harness/pi_protocol.py` after the move
+# would have hashed the six-line alias and reported it as the code identity of
+# every protocol block on the page.
+CODE = ["jax_harness/build_master_report.py", "jax_harness/pi_report.py",
+        "jax_harness/fig_headline.py", "jax_harness/fig_causal.py",
+        "jax_harness/analyze_transfer.py", "jax_harness/analyze_steer_pool.py",
+        "jax_harness/compare_internal_output.py", "jax_harness/analyze_pc2.py",
+        "jax_harness/analyze_chem.py", "jax_harness/analyze_xmodel_io.py",
+        "jax_harness/fig_xmodel_io.py", "jax_harness/analyze_layer_match.py",
+        "src/protein_interpretability/experiments/protocol.py"]
 
 # Reused unchanged from report_svd; copied in by the builder so this page is
 # self-contained and its figure cannot drift from the one that was reviewed.

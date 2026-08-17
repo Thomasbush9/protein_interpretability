@@ -30,8 +30,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
+# The repository ROOT, not jax_harness. Code identity used to be a flat list of
+# basenames because every script lived in one directory; now the library modules
+# live under src/protein_interpretability/ and the entry points do not, so the
+# names in CODE are repo-relative paths and are resolved from here.
 REPO = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/"
-            "protein_interpretability/jax_harness")
+            "protein_interpretability")
 
 
 def sha256(p: Path) -> str:
@@ -166,9 +170,13 @@ def archive_inputs(out: Path, resolved, stale, code_files):
         if not p.exists():
             continue
         code[name] = sha256(p)
-        r = W / "harness" / name
-        if r.exists() and sha256(r) != code[name]:
-            drifted.append(name)
+        # The mirror is a copy of jax_harness only, so the drift check applies
+        # to entry points and not to the library modules that now live under
+        # src/ -- those cannot drift, because there is no second copy of them.
+        if name.startswith("jax_harness/"):
+            r = W / "harness" / Path(name).name
+            if r.exists() and sha256(r) != code[name]:
+                drifted.append(name)
         # Recording a commit is not the same as being AT it. An earlier version
         # of this function compared the repo working tree against the harness
         # copy -- both uncommitted -- and stamped `commit` regardless, so a page
@@ -177,7 +185,7 @@ def archive_inputs(out: Path, resolved, stale, code_files):
         # object store instead.
         if commit != "unknown":
             blob = subprocess.run(
-                ["git", "cat-file", "blob", f"{commit}:jax_harness/{name}"],
+                ["git", "cat-file", "blob", f"{commit}:{name}"],
                 cwd=REPO, capture_output=True, timeout=10)
             if blob.returncode != 0:
                 uncommitted.append(name)

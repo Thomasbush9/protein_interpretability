@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Protein Interpretability Library Refactoring Plan</title>
+  <style>
+    :root {
+      --ink: #17211d;
+      --muted: #59665f;
+      --paper: #f6f3ec;
+      --panel: #fffdf8;
+      --line: #d8d6cc;
+      --green: #176b53;
+      --green-soft: #e4f1eb;
+      --blue: #2c5f8a;
+      --blue-soft: #e8f0f7;
+      --amber: #9a5c11;
+      --amber-soft: #f7ebd7;
+      --red: #963d35;
+      --red-soft: #f7e8e4;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
+      line-height: 1.58;
+    }
+    header {
+      padding: 5rem max(1.5rem, calc((100vw - 1120px) / 2));
+      color: white;
+      background: linear-gradient(125deg, #102d25 0%, #176b53 62%, #2b7c69 100%);
+    }
+    header .kicker { margin: 0 0 .8rem; letter-spacing: .13em; text-transform: uppercase; opacity: .78; font-size: .8rem; }
+    h1 { max-width: 900px; margin: 0; font: 700 clamp(2.5rem, 6vw, 5rem)/1.03 var(--serif); }
+    header .lede { max-width: 820px; margin: 1.5rem 0 0; font-size: 1.2rem; color: #e4f1eb; }
+    header .meta { margin-top: 2rem; font-size: .87rem; opacity: .8; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      gap: 1rem;
+      overflow-x: auto;
+      padding: .85rem max(1.5rem, calc((100vw - 1120px) / 2));
+      background: rgba(255, 253, 248, .96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+    nav a { flex: 0 0 auto; color: var(--muted); text-decoration: none; font-size: .85rem; }
+    nav a:hover { color: var(--green); }
+    main { max-width: 1120px; margin: auto; padding: 3rem 1.5rem 7rem; }
+    section { scroll-margin-top: 4rem; padding: 2.2rem 0; border-bottom: 1px solid var(--line); }
+    h2 { margin: 0 0 1.3rem; font: 700 clamp(1.8rem, 4vw, 2.7rem)/1.12 var(--serif); }
+    h3 { margin: 1.8rem 0 .65rem; font-size: 1.08rem; }
+    p { max-width: 850px; }
+    code, pre { font-family: var(--mono); }
+    code { padding: .08rem .28rem; background: #eceae3; border-radius: 3px; font-size: .9em; }
+    pre {
+      overflow-x: auto;
+      padding: 1.2rem;
+      color: #eaf4ef;
+      background: #13251f;
+      border-radius: 7px;
+      font-size: .84rem;
+      line-height: 1.55;
+    }
+    pre code { padding: 0; color: inherit; background: none; }
+    ul, ol { max-width: 900px; padding-left: 1.35rem; }
+    li { margin: .38rem 0; }
+    .summary-grid, .cards, .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+      gap: 1rem;
+      margin: 1.4rem 0;
+    }
+    .card {
+      padding: 1.15rem;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 7px;
+    }
+    .card h3 { margin-top: 0; }
+    .number { color: var(--green); font: 700 2rem/1 var(--serif); }
+    .label { margin-top: .5rem; color: var(--muted); font-size: .85rem; }
+    .callout { max-width: 920px; margin: 1.4rem 0; padding: 1rem 1.2rem; border-left: 4px solid var(--green); background: var(--green-soft); }
+    .callout.warning { border-color: var(--amber); background: var(--amber-soft); }
+    .callout.stop { border-color: var(--red); background: var(--red-soft); }
+    .tag { display: inline-block; margin: .1rem .25rem .1rem 0; padding: .16rem .5rem; border-radius: 99px; font-size: .74rem; font-weight: 700; }
+    .tag.core { color: #11513f; background: var(--green-soft); }
+    .tag.candidate { color: #70420d; background: var(--amber-soft); }
+    .tag.offline { color: #244e71; background: var(--blue-soft); }
+    .tag.gpu { color: #7a3029; background: var(--red-soft); }
+    .scroll { overflow-x: auto; margin: 1.2rem 0; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); font-size: .88rem; }
+    th, td { padding: .72rem .8rem; text-align: left; vertical-align: top; border: 1px solid var(--line); }
+    th { background: #e9e7df; font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
+    td:first-child { font-weight: 650; }
+    .flow { display: grid; grid-template-columns: repeat(7, auto); align-items: center; gap: .45rem; margin: 1.5rem 0; }
+    .flow .node { padding: .8rem; text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+    .flow .arrow { color: var(--green); font-weight: 800; }
+    .phase { position: relative; padding-left: 3rem; }
+    .phase::before { content: attr(data-phase); position: absolute; left: 0; top: 0; width: 2rem; height: 2rem; display: grid; place-items: center; color: white; background: var(--green); border-radius: 50%; font-weight: 800; }
+    .phase h3 { margin-top: .2rem; }
+    .checklist li::marker { color: var(--green); content: "✓  "; }
+    .footer-note { color: var(--muted); font-size: .82rem; }
+    @media (max-width: 760px) {
+      header { padding-top: 3.5rem; padding-bottom: 3.5rem; }
+      .flow { grid-template-columns: 1fr; }
+      .flow .arrow { transform: rotate(90deg); text-align: center; }
+    }
+    @media print {
+      nav { display: none; }
+      body { background: white; }
+      header { padding: 2rem; print-color-adjust: exact; }
+      main { max-width: none; padding: 1rem; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="kicker">Architecture and migration plan · August 2026</p>
+    <h1>From experiment history to an inspectable library</h1>
+    <p class="lede">Refactor the protein-interpretability code into a clean library for representation collection, prediction, intervention, and offline analysis—while reproducing the inputs and results behind the current report across every tested model.</p>
+    <p class="meta">Planning document · no scientific result is considered migrated until old and new workflows agree under a recorded protocol.</p>
+  </header>
+
+  <nav aria-label="Plan sections">
+    <a href="#goal">Goal</a>
+    <a href="#scope">Scope</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#models">Models</a>
+    <a href="#inputs">Inputs</a>
+    <a href="#interfaces">Interfaces</a>
+    <a href="#migration">Migration</a>
+    <a href="#validation">Validation</a>
+    <a href="#hpc">HPC</a>
+    <a href="#done">Definition of done</a>
+  </nav>
+
+  <main>
+    <section id="goal">
+      <h2>1 · Goal and non-negotiable outcome</h2>
+      <p>The finished repository should make a scientific experiment understandable from a short Python script. That script should state the model, inputs, representations, layers, interventions, measurements, and output location. Model-specific plumbing should remain available behind explicit, navigable methods, but should not obscure the experiment's surface behavior.</p>
+
+      <div class="summary-grid">
+        <div class="card"><div class="number">01</div><div class="label">Library for all audited model backends</div></div>
+        <div class="card"><div class="number">02</div><div class="label">Clean separation between live model execution and offline analysis</div></div>
+        <div class="card"><div class="number">03</div><div class="label">Exact current cohorts and protocols preserved as manifests</div></div>
+        <div class="card"><div class="number">04</div><div class="label">Old and new results compared before legacy code is removed</div></div>
+      </div>
+
+      <div class="callout"><strong>Primary acceptance test.</strong> Starting from the recorded inputs used by the current report, the new library can recollect the required representations and reproduce the archived analysis outputs within declared numerical tolerances, using jobs submitted from a clean checkout.</div>
+
+      <h3>Design rule</h3>
+      <p><strong>Experiment scripts describe scientific intent; library code handles model mechanics, capture, storage, validation, scheduling, and provenance.</strong></p>
+
+      <h3>Non-goals</h3>
+      <ul>
+        <li>Do not create one fictional architecture that hides meaningful differences among Boltz-2, OpenFold3, Protenix, AF2, and ESMFold.</li>
+        <li>Do not move datasets, model weights, MSAs, or large tensors into Git.</li>
+        <li>Do not rewrite validated numerical kernels merely to make the directory tree look uniform.</li>
+        <li>Do not delete historical scripts until an immutable external archive and a migration ledger exist.</li>
+        <li>Do not require a model environment to run offline analyses.</li>
+      </ul>
+    </section>
+
+    <section id="scope">
+      <h2>2 · Repository scope after refactoring</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Belongs in this repository</th><th>Belongs outside this repository</th></tr></thead>
+          <tbody>
+            <tr><td>Model adapters and supported capture sites</td><td>Checkpoints, databases, container images, and model caches</td></tr>
+            <tr><td>Input, capture, prediction, and result schemas</td><td>Raw assay datasets, generated MSAs, YAML cohorts, and large captures</td></tr>
+            <tr><td>Small, inspectable experiment programs</td><td>Generated run directories, reports, figures, and scheduler logs</td></tr>
+            <tr><td>Offline analysis, metrics, statistics, and plotting</td><td>Immutable snapshots of historical exploratory scripts</td></tr>
+            <tr><td>Cluster-neutral configuration plus a local site profile</td><td>User-specific paths and credentials</td></tr>
+            <tr><td>Tests, tiny fixtures, schemas, and expected summaries</td><td>Full-size tensors used only for scientific regression</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Historical archive</h3>
+      <p>Before removal, copy the current experimental harness and superseded scripts to an external, timestamped archive under the existing project-data area. The archive should include source files, Git commit, environment and scheduler files, a migration ledger, and SHA-256 checksums. It should be treated as read-only after creation.</p>
+      <pre><code>prot_interp_files/code_archive/
+└── pre_library_refactor_2026-08-XX/
+    ├── jax_harness/
+    ├── scripts/
+    ├── environment/
+    ├── MIGRATION_LEDGER.csv
+    ├── README.md
+    ├── git_commit.txt
+    └── checksums.sha256</code></pre>
+      <div class="callout warning"><strong>Removal rule.</strong> A script may leave the active repository only after it is classified as <em>migrated</em>, <em>historical-only</em>, or <em>superseded</em>, and its archive checksum has been recorded.</div>
+    </section>
+
+    <section id="architecture">
+      <h2>3 · Target architecture</h2>
+      <div class="flow" aria-label="Data flow">
+        <div class="node">Input manifest</div><div class="arrow">→</div>
+        <div class="node">Model adapter</div><div class="arrow">→</div>
+        <div class="node">Collection / prediction / intervention</div><div class="arrow">→</div>
+        <div class="node">Versioned artifact</div>
+      </div>
+      <div class="flow" aria-label="Analysis flow">
+        <div class="node">Versioned artifact</div><div class="arrow">→</div>
+        <div class="node">Offline transforms</div><div class="arrow">→</div>
+        <div class="node">Statistical protocol</div><div class="arrow">→</div>
+        <div class="node">Result / figure</div>
+      </div>
+
+      <pre><code>src/protein_interpretability/
+├── collection/
+│   ├── models/             # adapter interface + model implementations
+│   ├── capture.py          # CaptureSpec and capture-site vocabulary
+│   ├── runner.py           # batching, resume, device execution
+│   ├── records.py          # inputs and collected-record schemas
+│   └── storage.py          # atomic, versioned artifact I/O
+├── prediction/
+│   ├── runner.py           # coordinates, confidence, distograms
+│   └── outputs.py          # normalized prediction schema
+├── intervention/
+│   ├── base.py             # live-model intervention protocol
+│   ├── pair.py             # row/column and channel-space interventions
+│   └── measurements.py     # output response measurements
+├── analysis/
+│   ├── datasets.py         # artifact-only access
+│   ├── representations.py  # WT/mutant differences and reductions
+│   ├── basis.py            # shared-basis definition and orientation
+│   ├── metrics.py
+│   ├── statistics.py
+│   └── plotting.py
+├── experiments/
+│   ├── context.py          # resolved config, paths, seed, run identity
+│   ├── protocol.py         # comparable scientific protocol
+│   └── provenance.py       # code/input/environment identity
+└── cli/
+    ├── collect.py
+    ├── predict.py
+    ├── intervene.py
+    └── analyze.py
+
+experiments/
+├── collection/             # readable scientific programs
+├── prediction/
+├── intervention/
+└── analysis/
+
+configs/
+├── site/                   # cluster profile, ignored local overrides
+├── cohorts/                # portable input manifests
+└── experiments/            # optional declarative configurations
+
+slurm/                      # thin, generic submission templates
+tests/                      # model-free + marked compute integration tests</code></pre>
+
+      <h3>Stable concepts</h3>
+      <div class="cards">
+        <div class="card"><h3>ModelAdapter</h3><p>Loads one architecture, builds features, exposes supported sites, executes predictions, and returns normalized outputs.</p></div>
+        <div class="card"><h3>CaptureSpec</h3><p>Names tensors, layers, recycling steps, reductions, precision, and expected memory without loading a model.</p></div>
+        <div class="card"><h3>RepresentationArtifact</h3><p>Versioned arrays plus tensor descriptors, model identity, input identity, resolved capture spec, and provenance.</p></div>
+        <div class="card"><h3>AnalysisDataset</h3><p>Reads artifacts only. It cannot import or instantiate a structure model.</p></div>
+        <div class="card"><h3>Intervention</h3><p>Defines a live alteration separately from the measurements collected after it.</p></div>
+        <div class="card"><h3>ExperimentContext</h3><p>Resolves paths, seeds, environment, output identity, SLURM metadata, and resume policy once.</p></div>
+      </div>
+    </section>
+
+    <section id="models">
+      <h2>4 · Model support matrix</h2>
+      <p>“All models tested” must be defined by evidence rather than by files that happen to exist. The current master report directly compares three models. AF2 and ESMFold have code paths in the repository and should be migrated through the same interfaces, but their exact role in reproducing the present headline must be audited first.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Model</th><th>Current evidence</th><th>Required new adapter</th><th>Representations / outputs</th><th>Migration status target</th></tr></thead>
+          <tbody>
+            <tr><td>Boltz-2</td><td>Primary 12-assay and held-out results; causal and mechanism experiments</td><td>Joltz/JAX adapter for mechanistic capture; PyTorch adapter where existing extraction is required</td><td><code>s</code>, <code>z</code>, per-layer/sublayer states, distogram, pLDDT, coordinates, attention where supported</td><td><span class="tag core">reproduction-critical</span></td></tr>
+            <tr><td>OpenFold3</td><td>Current three-model internal-versus-output and depth comparisons</td><td>Mosaic-backed adapter with explicit local-MSA injection and network blocking</td><td>Final and per-layer pair representation, pLDDT, distogram, coordinates</td><td><span class="tag core">reproduction-critical</span></td></tr>
+            <tr><td>Protenix</td><td>Current three-model internal-versus-output and depth comparisons</td><td>Mosaic-backed adapter with explicit local-MSA injection and network blocking</td><td>Final and per-layer pair representation, pLDDT, distogram, coordinates</td><td><span class="tag core">reproduction-critical</span></td></tr>
+            <tr><td>AlphaFold2</td><td>Harness adapter/probes exist; not a row in the current three-model headline</td><td>Mosaic-backed single-sequence adapter with explicit limitations</td><td>Pair representation, distogram grid, pLDDT, coordinates where available</td><td><span class="tag candidate">audit then support</span></td></tr>
+            <tr><td>ESMFold</td><td>Existing package extractor and extraction documentation; not part of the current three-model headline</td><td>Transformers/PyTorch adapter</td><td>ESM encoder layers, folding-trunk <code>s</code>/<code>z</code>, distogram, pLDDT, coordinates</td><td><span class="tag candidate">audit then support</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Adapter contract</h3>
+      <ul>
+        <li>Report architecture name, implementation/backend, checkpoint identity, layer count, channel widths, and output grids.</li>
+        <li>Expose supported capture sites as data; invalid layer/site combinations fail during inspection.</li>
+        <li>Accept an explicit local input/MSA manifest and report exactly what was consumed.</li>
+        <li>Normalize common outputs without normalizing away architecture-specific semantics.</li>
+        <li>Prevent silent network fallback during reproduction runs.</li>
+        <li>Keep native numerical behavior unchanged until equivalence has been established.</li>
+      </ul>
+    </section>
+
+    <section id="inputs">
+      <h2>5 · Input reproduction contract</h2>
+      <p>The refactor must first capture the exact inputs behind the current results. Paths alone are insufficient: every scientific input should have a stable logical identifier, role, checksum, and model-specific materialization record.</p>
+
+      <h3>Required manifests</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Manifest</th><th>Content</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td><code>basis_assays.yaml</code></td><td>The original 12 stability assays, variants, mutation sites, labels, WT sequences, and assay grouping</td><td>Shared basis, transfer, chemistry controls, layer/depth, mechanism</td></tr>
+            <tr><td><code>heldout_assays.yaml</code></td><td>The disjoint held-out stability and non-stability assays, with frozen-basis role recorded</td><td>Held-out PC2 evaluation and future held-out causal intervention</td></tr>
+            <tr><td><code>cross_model_assays.yaml</code></td><td>The four assays and identical variants used across Boltz-2, OpenFold3, and Protenix</td><td>Internal-versus-output and matched relative-depth results</td></tr>
+            <tr><td><code>intervention_sites.yaml</code></td><td>Proteins, four sites per protein, direction artifact, doses, symmetric injection rule, measurements, and random-control seeds</td><td>PC2 steering reproduction</td></tr>
+            <tr><td><code>model_inputs.yaml</code></td><td>Per-model YAML/FASTA/A3M paths and checksums, feature-generation version, chain mapping, and expected token/residue counts</td><td>Every live model run</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Example portable record</h3>
+      <pre><code>id: assay_01_variant_0042
+assay: assay_01
+role: variant
+reference_id: assay_01_wt
+sequence:
+  path: ${DATA_ROOT}/sequences/assay_01_variant_0042.fasta
+  sha256: "..."
+mutation:
+  wild_type: L
+  position: 37
+  mutant: P
+label:
+  name: ddg_or_score
+  value: -1.42
+models:
+  boltz2:
+    yaml: ${DATA_ROOT}/boltz/assay_01_variant_0042.yaml
+    msa: ${DATA_ROOT}/msa/assay_01_variant_0042.a3m
+  openfold3:
+    msa: ${DATA_ROOT}/msa/assay_01_variant_0042.a3m
+  protenix:
+    msa: ${DATA_ROOT}/msa/assay_01_variant_0042.a3m</code></pre>
+
+      <div class="callout stop"><strong>Reproduction guard.</strong> A job must stop if a checksum, residue/token mapping, MSA depth, model grid, or expected representation width differs from the manifest. It must never regenerate or substitute an input silently.</div>
+    </section>
+
+    <section id="interfaces">
+      <h2>6 · The inspectable surface</h2>
+      <p>The preferred user interface is Python. YAML may provide paths and cohort data, but the scientific behavior should remain visible in a short program.</p>
+
+      <h3>Collection</h3>
+      <pre><code>from protein_interpretability.collection import (
+    CaptureSpec,
+    Cohort,
+    ModelCollector,
+)
+
+cohort = Cohort.from_manifest("configs/cohorts/cross_model_assays.yaml")
+
+capture = CaptureSpec.pair_representations(
+    layers="all",
+    at_mutation_site=True,
+    recycle="final",
+)
+
+collector = ModelCollector.for_model(
+    "boltz2",
+    backend="joltz",
+    recycles=3,
+    seed=0,
+)
+
+collector.collect(
+    cohort,
+    capture=capture,
+    output="runs/boltz2_pair_layers",
+)</code></pre>
+
+      <h3>Offline analysis</h3>
+      <pre><code>from protein_interpretability.analysis import (
+    RepresentationDataset,
+    SharedBasis,
+    leave_one_assay_out,
+)
+
+reps = RepresentationDataset.open("runs/boltz2_pair_layers")
+dz = reps.difference_from_reference(
+    field="pair",
+    reduction="mutation_row_mean",
+)
+
+basis = SharedBasis.fit(
+    dz,
+    standardize="within_assay",
+    center=True,
+    orient_by="model_divergence",
+)
+
+result = leave_one_assay_out(
+    basis.project(dz, components=[1]),
+    target="assay_score",
+)</code></pre>
+
+      <h3>Prediction</h3>
+      <pre><code>from protein_interpretability.collection import Cohort
+from protein_interpretability.prediction import Predictor
+
+cohort = Cohort.from_manifest("configs/cohorts/cross_model_assays.yaml")
+predictor = Predictor.for_model("openfold3", recycles=3, seed=0)
+
+predictor.predict(
+    cohort,
+    outputs=["distogram", "plddt", "coordinates"],
+    output="runs/openfold3_predictions",
+)</code></pre>
+
+      <h3>Intervention</h3>
+      <pre><code>from protein_interpretability.intervention import (
+    PairDirectionIntervention,
+    DistogramWidth,
+    PLDDTAtSite,
+)
+
+intervention = PairDirectionIntervention.from_artifact(
+    "artifacts/shared_basis_v1",
+    component=1,                # zero-based PC2
+    layers=["final"],
+    mode="symmetric_row_column",
+    doses=[-30, -10, -3, 3, 10, 30],
+)
+
+collector.intervene(
+    cohort,
+    intervention=intervention,
+    measurements=[DistogramWidth(), PLDDTAtSite()],
+    controls={"random_directions": 8, "seed": 0},
+    output="runs/heldout_pc2_intervention",
+)</code></pre>
+
+      <h3>Command-line lifecycle</h3>
+      <pre><code># Login node: parse and validate only; never load a model.
+uv run pi collect inspect experiments/collection/collect_pair_layers.py
+
+# Render the exact resolved job and resource estimate.
+uv run pi collect render experiments/collection/collect_pair_layers.py
+
+# Submit the resolved job to SLURM.
+uv run pi collect submit experiments/collection/collect_pair_layers.py
+
+# Compute node / allocation only.
+uv run pi collect run experiments/collection/collect_pair_layers.py
+
+# Offline analysis can run without any model environment.
+uv run pi analyze run experiments/analysis/reproduce_transfer.py</code></pre>
+    </section>
+
+    <section id="migration">
+      <h2>7 · Migration sequence</h2>
+      <p>The migration proceeds as vertical slices. Each slice must produce a readable experiment, a reusable artifact, an offline analysis, and an old-versus-new comparison before the next more complicated workflow is attempted.</p>
+
+      <div class="phase-grid">
+        <div class="card phase" data-phase="0"><h3>Freeze and inventory</h3><p>Record the repository commit, archive source, enumerate scripts and archives, checksum inputs, and build the model/input/result migration ledger.</p></div>
+        <div class="card phase" data-phase="1"><h3>Schemas and dry run</h3><p>Implement manifests, <code>CaptureSpec</code>, artifacts, adapter metadata, site profiles, inspection, and SLURM rendering without model execution.</p></div>
+        <div class="card phase" data-phase="2"><h3>Boltz-2 vertical slice</h3><p>Migrate final/per-layer pair capture and WT–variant differences. Reproduce one small fixture and one existing assay.</p></div>
+        <div class="card phase" data-phase="3"><h3>Offline analytical core</h3><p>Migrate shared basis, transfer probes, chemistry/output baselines, bootstraps, permutations, and protocol-aware result writing.</p></div>
+        <div class="card phase" data-phase="4"><h3>Cross-model adapters</h3><p>Migrate OpenFold3 and Protenix using identical cohort/MSA manifests; reproduce the four-assay cross-model and depth panels.</p></div>
+        <div class="card phase" data-phase="5"><h3>Prediction and intervention</h3><p>Separate normalized prediction outputs, then migrate PC2 steering, random controls, doses, sites, and response metrics.</p></div>
+        <div class="card phase" data-phase="6"><h3>Additional models</h3><p>Audit and migrate AF2 and ESMFold, documenting which common contracts apply and which representation semantics remain model-specific.</p></div>
+        <div class="card phase" data-phase="7"><h3>Archive and remove</h3><p>Classify every old script, verify its replacement or historical status, archive with checksums, then remove legacy scope from the active tree.</p></div>
+      </div>
+
+      <h3>First reference slice</h3>
+      <p>The first implementation milestone should contain two programs and one small cohort:</p>
+      <pre><code>experiments/collection/collect_pairformer_layers.py
+experiments/analysis/analyze_pairformer_layers.py
+configs/cohorts/smoke_pairformer.yaml</code></pre>
+      <p>It should reproduce the capture and derived layer trace currently implemented through the Joltz harness, while leaving the tested numerical capture functions unchanged behind the new adapter.</p>
+
+      <h3>Migration ledger fields</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>legacy path / commit / hash</td><td>Identifies the exact implementation being replaced</td></tr>
+            <tr><td>scientific role</td><td>Collection, prediction, intervention, analysis, figure, report, scheduler, or historical probe</td></tr>
+            <tr><td>inputs and outputs</td><td>Records the real files and archive keys consumed or produced</td></tr>
+            <tr><td>replacement</td><td>New module and inspectable experiment program</td></tr>
+            <tr><td>validation</td><td>Command, fixture, tolerance, and comparison result</td></tr>
+            <tr><td>disposition</td><td><code>migrated</code>, <code>historical-only</code>, <code>superseded</code>, or <code>pending</code></td></tr>
+            <tr><td>archive location / checksum</td><td>Ensures removed code remains recoverable</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="validation">
+      <h2>8 · Validation and scientific equivalence</h2>
+      <div class="cards">
+        <div class="card"><span class="tag offline">login node</span><h3>Unit and contract tests</h3><ul><li>Manifest and config parsing</li><li>Site/layer validation</li><li>Schema round trips</li><li>Memory estimates</li><li>Analysis on synthetic arrays</li><li>SLURM rendering</li></ul></div>
+        <div class="card"><span class="tag gpu">compute node</span><h3>Model smoke tests</h3><ul><li>One short sequence</li><li>Minimal recycles</li><li>Selected layers</li><li>No unnecessary diffusion</li><li>Old/new capture comparison</li><li>Offline/no-network enforcement</li></ul></div>
+        <div class="card"><span class="tag core">scientific</span><h3>Regression tests</h3><ul><li>Tensor shapes and dtypes</li><li>Hashes or numerical summaries</li><li>Mutation-site <code>dz</code></li><li>Basis components and orientation</li><li>Probe statistics and intervals</li><li>Figure input tables</li></ul></div>
+      </div>
+
+      <h3>Comparison hierarchy</h3>
+      <ol>
+        <li><strong>Input equivalence:</strong> same sequence, MSA content/depth, residue mapping, checkpoint, seeds, recycles, and model settings.</li>
+        <li><strong>Execution equivalence:</strong> same capture site semantics, tensor shape/dtype, output grid, and deterministic settings.</li>
+        <li><strong>Representation equivalence:</strong> arrays equal or within a justified backend-specific tolerance.</li>
+        <li><strong>Derived-feature equivalence:</strong> same <code>dz_site</code>, layer reductions, prediction summaries, and basis projections.</li>
+        <li><strong>Statistical equivalence:</strong> same splits, normalization, feature width, seeds, permutation units, estimates, and intervals.</li>
+        <li><strong>Report equivalence:</strong> each current report input can be regenerated and the headline tables remain within declared tolerances.</li>
+      </ol>
+
+      <h3>Result families that must remain reproducible</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Family</th><th>Representative current artifacts</th><th>Required path</th></tr></thead>
+          <tbody>
+            <tr><td>Shared representation and transfer</td><td><code>svd_dz_v3</code>, <code>transfer_full</code>, <code>transfer_inductive</code></td><td>Collection → WT difference → basis/probe analysis</td></tr>
+            <tr><td>Chemistry and output controls</td><td><code>chem_v1</code>, <code>bw_v1</code></td><td>Input annotations/predictions → matched offline comparison</td></tr>
+            <tr><td>Held-out specificity</td><td><code>heldout_v1</code></td><td>Frozen basis artifact → disjoint cohort projection</td></tr>
+            <tr><td>Cross-model comparison</td><td><code>xmodel_io_vec</code>, <code>xmodel_v1</code>, <code>depth_v1</code></td><td>Shared cohort → per-model collection → normalized analysis</td></tr>
+            <tr><td>Causal steering</td><td><code>steer_pooled</code></td><td>Frozen direction → live intervention → signed response analysis</td></tr>
+            <tr><td>Mechanism</td><td><code>basis_depth</code>, <code>rotate_pooled</code>, <code>gate_probe</code>, <code>jac_pooled</code></td><td>Specialized capture → offline rotation/gating/Jacobian analysis</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="hpc">
+      <h2>9 · HPC execution contract</h2>
+      <ul class="checklist">
+        <li><code>inspect</code> and <code>render</code> never import a model backend or initialize CUDA/JAX.</li>
+        <li>GPU runs refuse to execute on a login node unless an explicit development override is present.</li>
+        <li>SLURM scripts are generic; account, partition, memory, time, GPUs, cache roots, and container paths come from a site profile.</li>
+        <li>Temporary processing uses job-local scratch; final artifacts are atomically committed to shared storage.</li>
+        <li>Capture memory is estimated before submission, with reduced mutation-row captures preferred over full <code>N × N × C × L</code> tensors.</li>
+        <li>Completed records are resumed only after validating their artifact metadata and checksums.</li>
+        <li>Network access is blocked for reproduction jobs that claim to use fixed local MSAs.</li>
+        <li>Each model may use its required environment/container, while artifacts obey one versioned storage contract.</li>
+        <li><code>UV_CACHE_DIR</code> and other caches resolve to writable job-local or configured paths rather than a login-node home cache.</li>
+        <li>Logs record resolved configuration, host, job ID, device, environment identity, Git commit, and input manifest hash.</li>
+      </ul>
+
+      <h3>Site configuration</h3>
+      <pre><code>site:
+  work_root: ${PROT_INTERP_WORK}
+  scratch_root: ${TMPDIR}
+  log_root: ${PROT_INTERP_WORK}/logs
+  scheduler:
+    account: kempner_bsabatini_lab
+    partition: kempner_h100
+  environments:
+    analysis: uv
+    boltz2_torch: /path/from/local-site-config
+    mosaic: /path/from/local-site-config
+    esmfold: /path/from/local-site-config
+  caches:
+    uv: ${TMPDIR}/uv-cache
+    boltz2: /path/from/local-site-config</code></pre>
+      <p class="footer-note">The committed example contains variables and logical names. User- or cluster-specific absolute paths live in an ignored local override.</p>
+    </section>
+
+    <section id="done">
+      <h2>10 · Definition of done</h2>
+      <ul class="checklist">
+        <li>The exact original, held-out, cross-model, and intervention cohorts are represented by checksummed manifests.</li>
+        <li>Boltz-2, OpenFold3, and Protenix reproduce the current report inputs through supported adapters.</li>
+        <li>AF2 and ESMFold are either supported through the same contracts or explicitly documented as audited exclusions with reasons.</li>
+        <li>Collection, prediction, intervention, and analysis have separate import boundaries and artifact contracts.</li>
+        <li>Offline analysis installs and runs without model-specific environments.</li>
+        <li>Every supported workflow has a short Python experiment that exposes its scientific choices.</li>
+        <li>Every live run has a login-node-safe inspection path and a scheduler submission path.</li>
+        <li>Current headline result families pass recorded old-versus-new regression checks.</li>
+        <li>All active result writers enforce protocol and provenance metadata.</li>
+        <li>The migration ledger accounts for every old harness and script file.</li>
+        <li>Historical code has been copied to an immutable external archive with checksums.</li>
+        <li>Legacy code is removed from the active repository only after the preceding conditions pass.</li>
+      </ul>
+
+      <div class="callout"><strong>First deliverable.</strong> Implement the schemas and dry-run path, then migrate the Boltz-2 pair-layer vertical slice into <code>collect_pairformer_layers.py</code> and <code>analyze_pairformer_layers.py</code>. Use that slice to judge whether the public API is genuinely easy to inspect before applying it to the remaining experiments.</div>
+
+      <h3>Decision gates</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Gate</th><th>Question</th><th>Required evidence</th></tr></thead>
+          <tbody>
+            <tr><td>API gate</td><td>Can the scientific behavior be understood from the experiment file?</td><td>Review of the first vertical-slice scripts before broader migration</td></tr>
+            <tr><td>Capture gate</td><td>Does the new adapter preserve the old tensor semantics?</td><td>Old/new compute-node comparison on fixed inputs</td></tr>
+            <tr><td>Analysis gate</td><td>Can results be regenerated without importing a model?</td><td>Clean analysis-environment regression run</td></tr>
+            <tr><td>Model gate</td><td>Did every model consume the intended identical inputs?</td><td>Checksums, MSA depths, mappings, grids, and model metadata</td></tr>
+            <tr><td>Removal gate</td><td>Is the old implementation recoverable and accounted for?</td><td>Migration ledger, external archive, and checksums</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
