@@ -83,11 +83,100 @@ def available() -> list[str]:
     return sorted(BUILDERS)
 
 
-def load(name: str):
-    """Load a model by short name."""
+MSA_REGIMES = ("subsample", "full")
+
+
+def _set_subsample(wrapper, flag: bool):
+    """Set Boltz-2's MSA subsampling on an already-built wrapper.
+
+    It cannot be passed in: `Boltz2.__init__` takes only `cache_path`, and the
+    MSA module is a frozen equinox Module, so the field is replaced rather than
+    configured.
+    """
+    import equinox as eqx
+
+    mm = getattr(getattr(wrapper, "model", None), "msa_module", None)
+    if mm is None or not hasattr(mm, "subsample_msa"):
+        raise RuntimeError(
+            "this wrapper has no msa_module.subsample_msa to set; the mosaic "
+            "version may have moved it, and silently running the wrong MSA "
+            "regime is exactly what this function exists to prevent")
+    if bool(mm.subsample_msa) == flag:
+        return wrapper
+    new_mm = eqx.tree_at(lambda m: m.subsample_msa, mm, flag)
+    return eqx.tree_at(lambda w: w.model.msa_module, wrapper, new_mm)
+
+
+def load(name: str, *, msa: str):
+    """Load a model by short name, stating the MSA regime.
+
+    `msa` is REQUIRED and has no default, which is deliberate. The two regimes
+    are both wanted -- `subsample` for everyday runs, `full` for anything whose
+    numbers are meant to be reproduced -- and they are not interchangeable:
+
+        subsample   Boltz-2 draws 1024 alignment rows per PRNG key. This is
+                    mosaic's own default and what every capture written through
+                    this module so far has used.
+        full        the whole alignment, which is what `pi_core.load_model`
+                    does and what every ARCHIVED Boltz-2 capture was produced
+                    with.
+
+    Measured across two assays (`exp_msa_regime.py`), the difference costs
+    nothing scientifically: dz_site agrees between regimes as well as two
+    subsample draws agree with each other, so it is draw variance and not bias.
+    What it costs is exactness -- under `full`, dz_site is bit-reproducible
+    across keys (correlation 1.000000); under `subsample` it is not.
+
+    A default would make that a property of whoever last edited this file
+    rather than of the experiment, and the regime is not recoverable from the
+    output afterwards. `regime_block()` puts it in the protocol so it is.
+
+    Only Boltz-2 has this switch; for the other wrappers `msa` is validated and
+    recorded, so a cohort's regime is stated in one place for every model.
+    """
     if name not in BUILDERS:
         raise KeyError(f"unknown model {name!r}; have {available()}")
-    return BUILDERS[name]()
+    if msa not in MSA_REGIMES:
+        raise ValueError(
+            f"msa must be one of {MSA_REGIMES}, got {msa!r}. Use 'full' for "
+            "results meant to be reproduced -- every archived Boltz-2 capture "
+            "was produced that way -- and 'subsample' for everyday runs.")
+    wrapper = BUILDERS[name]()
+    if name == "boltz2":
+        wrapper = _set_subsample(wrapper, msa == "subsample")
+    return wrapper
+
+
+def msa_regime(name: str, wrapper) -> str | None:
+    """The regime a built wrapper is ACTUALLY in, read back off the module.
+
+    Read rather than remembered: the point of recording a regime is defeated if
+    the record is the argument that was passed instead of the state that
+    resulted.
+    """
+    if name != "boltz2":
+        return None
+    mm = getattr(getattr(wrapper, "model", None), "msa_module", None)
+    if mm is None or not hasattr(mm, "subsample_msa"):
+        return None
+    return "subsample" if bool(mm.subsample_msa) else "full"
+
+
+def regime_block(name: str, wrapper) -> dict:
+    """Protocol fields describing the MSA regime, to merge into a result block."""
+    regime = msa_regime(name, wrapper)
+    block = {"msa_regime": regime or "n/a (no subsampling switch on this model)"}
+    if regime == "subsample":
+        mm = wrapper.model.msa_module
+        block["msa_subsample_rows"] = int(getattr(mm, "num_subsampled_msa", 0))
+        block["reproducibility"] = (
+            "NOT bit-reproducible: the alignment is redrawn per PRNG key, so "
+            "repeat runs differ at ~1e-3 in dz_site")
+    elif regime == "full":
+        block["reproducibility"] = (
+            "bit-reproducible across keys; matches the regime every archived "
+            "Boltz-2 capture was produced with")
+    return block
 
 
 INNER_FIELD = {"of3": "model", "protenix": "protenix", "boltz2": "model"}

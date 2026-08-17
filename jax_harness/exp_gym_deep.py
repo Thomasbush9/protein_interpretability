@@ -96,6 +96,9 @@ def main():
     ap.add_argument("--sampling-steps", type=int, default=200)
     ap.add_argument("--msa-cap", type=int, default=2048)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--msa", default="subsample",
+                    choices=pi_models.MSA_REGIMES,
+                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
     args = ap.parse_args()
 
     import jax
@@ -118,7 +121,7 @@ def main():
     src = Path(args.a3m)
 
     t0 = time.time()
-    wrapper = pi_models.load(args.model)
+    wrapper = pi_models.load(args.model, msa=args.msa)
     inner = pi_models.inner(args.model, wrapper)
     cap_fn = pi_capture.CAPTURE[args.model]
     key = jax.random.key(0)
@@ -244,6 +247,12 @@ def main():
     out["model"] = np.array(args.model)
     out["assay"] = np.array(args.assay)
     out["n_layers"] = np.array(nL)
+    # The MSA regime is not recoverable from the arrays, and the two are not
+    # interchangeable: `subsample` redraws the alignment per key and is not
+    # bit-reproducible. Read back off the built model rather than echoing the
+    # argument, so the record describes what ran.
+    for _k, _v in pi_models.regime_block(args.model, wrapper).items():
+        out[_k] = np.array(str(_v))
     np.savez_compressed(args.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
           f"({len(rec)} variants x {nL} layers; dz_vec "

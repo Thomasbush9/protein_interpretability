@@ -109,6 +109,9 @@ def main():
     ap.add_argument("--sampling-steps", type=int, default=200)
     ap.add_argument("--msa-cap", type=int, default=2048)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--msa", default="subsample",
+                    choices=pi_models.MSA_REGIMES,
+                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
     a = ap.parse_args()
 
     import jax
@@ -128,7 +131,7 @@ def main():
     work = Path(a.work)
     (work / "msa").mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    wrapper = pi_models.load("boltz2")
+    wrapper = pi_models.load("boltz2", msa=args.msa)
     inner = pi_models.inner("boltz2", wrapper)
     cap_fn = pi_capture.CAPTURE["boltz2"]
     key = jax.random.key(0)
@@ -254,6 +257,12 @@ def main():
            "msa_depth": np.array(dep), "family": np.array(a.family),
            "resnums": resnums, "capture_drift": np.array(drift),
            "wt_overlap_a": rows[0]["ov_a"], "wt_overlap_b": rows[0]["ov_b"]}
+    # The MSA regime is not recoverable from the arrays, and the two are not
+    # interchangeable: `subsample` redraws the alignment per key and is not
+    # bit-reproducible. Read back off the built model rather than echoing the
+    # argument, so the record describes what ran.
+    for _k, _v in pi_models.regime_block("boltz2", wrapper).items():
+        out[_k] = np.array(str(_v))
     np.savez_compressed(a.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {a.out}", flush=True)
 

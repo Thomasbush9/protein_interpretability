@@ -83,6 +83,11 @@ def main():
                          "absolute difference.")
     ap.add_argument("--msa-cap", type=int, default=None)
     ap.add_argument("--work", required=True)
+    ap.add_argument("--msa", default="full", choices=pi_models.MSA_REGIMES,
+                    help="regime for the pi_models side. `full` matches "
+                         "pi_core and isolates the adapter difference; "
+                         "`subsample` measures adapter and regime together, "
+                         "which is what the first run of this script did.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -112,7 +117,9 @@ def main():
     depth_core = pi_models.msa_depth("boltz2", feats_core)
 
     # ---- pi_models: sequence + a3m -> mosaic ------------------------------
-    wrapper = pi_models.load("boltz2")
+    # `full` matches pi_core, so what is left after this is the ADAPTER
+    # difference alone. Run with --msa subsample to measure the two together.
+    wrapper = pi_models.load("boltz2", msa=a.msa)
     ex = pi_models.run_one(wrapper, seq, str(a3m), recycles=a.recycles,
                            key=jax.random.key(0), name="boltz2", work=work)
     feats_m, _ = pi_models.features_for("boltz2", wrapper, seq, str(a3m), work=work)
