@@ -309,6 +309,64 @@
   </section>
 
   <section>
+    <h2>Step 4: the loader unification, verified</h2>
+    <p><code>pi_core.load_model(backend="mosaic")</code> now returns
+      <code>pi_models.load("boltz2", msa=…)</code> unwrapped. That works because mosaic's wrapper
+      holds exactly the joltz network in <code>.model</code>, so the trunk instrumentation is
+      untouched — the unification is a swap of the loader, not a rewrite of the capture code.</p>
+    <p>The verification measures <code>dz_site</code> rather than the wild-type output, because
+      every result here is a variant-minus-wild-type difference taken from the trunk. It reads the
+      result against a scale rather than against zero: the same loader at a different key is the
+      deterministic floor, and the 1,024-row subsample is a band this project has already
+      accepted.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Arm</th><th>dz_site corr vs reference</th><th>endpoint Spearman</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td class="name">joltz, full, key 0</td><td class="m">— reference</td><td class="m">−0.3845</td><td>today's path</td></tr>
+          <tr><td class="name">joltz, full, key 1</td><td class="m">1.000000</td><td class="m">−0.3845</td><td>deterministic floor</td></tr>
+          <tr><td class="name">joltz, subsample</td><td class="m">0.998021</td><td class="m">−0.3966</td><td>an accepted band</td></tr>
+          <tr class="hl"><td class="name">mosaic, full</td><td class="m">1.000000</td><td class="m">−0.3845</td><td>the proposed loader</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The mosaic loader sits <em>at the deterministic floor</em> — indistinguishable from the same
+      loader run at a different key, with the endpoint identical to four decimals. The 0.030 Å
+      residual visible in the wild-type distogram does not propagate into <code>dz_site</code> at
+      all, because a small offset common to variant and wild type cancels in the difference. That
+      is exactly why the test had to be on <code>dz_site</code> and not on the output.</p>
+    <p class="rec"><b>Recommendation:</b> the swap is safe for the representation results, but the
+      default stays <code>joltz</code>. Captures also store absolute quantities — <code>kl_glob</code>,
+      <code>disto</code>, <code>plddt</code>, <code>ca</code> — and those <em>do</em> carry the
+      0.030 Å difference. Making mosaic the default should follow a capture-level comparison of
+      those fields, not ride along with this one.</p>
+  </section>
+
+  <section>
+    <h2>Step 5: the CLI, scoped to what is stable</h2>
+    <p>The plan sketches <code>collect / predict / intervene / analyze</code>. Those wrap code that
+      is still moving. Three things are already stable, load-bearing, and were being done with a
+      throwaway script each time — which is where tolerances and the known-unstable list get lost.</p>
+    <ul class="plain">
+      <li><code>pi reproduce RESULT.json</code> — replays the <code>argv</code> the result recorded,
+        redirecting <code>--out</code>. Every archive already carries its exact command; this stops
+        that from being re-implemented per investigation.</li>
+      <li><code>pi verify OLD NEW</code> — the diff with the measured non-determinism bands applied,
+        each band carrying <em>how</em> it was measured. An unknown producer must be exact, and the
+        failure text tells you to run the unchanged code twice first.</li>
+      <li><code>pi inspect FILE.py</code> — module-scope backend imports and results written with no
+        protocol block. Across the 17 producers it flags exactly one: <code>probe_gate</code>, which
+        imports equinox at module scope and does load a model.</li>
+    </ul>
+    <p>None of the three imports numpy, jax or a backend, so all run on a login node — and
+      <code>inspect</code> exists to hold other files to that. Its first version checked for a
+      module-level <code>PROTOCOL</code> constant and flagged four producers that have carried a
+      protocol block in every archive they have ever written; they build it inline inside
+      <code>main</code>. A guard that fails on the good path is worse than no guard, because the
+      response is to stop reading it.</p>
+  </section>
+
+  <section>
     <h2>What else changed</h2>
     <ul class="plain">
       <li><strong>The package path is reclaimed.</strong> The May-era generation is gone — 41 package
