@@ -1,0 +1,288 @@
+<title>The Adapters Disagree</title>
+<style>
+  :root {
+    --ink: #16201f;
+    --muted: #5b6a64;
+    --paper: #f7f5f0;
+    --panel: #fffdf9;
+    --panel-2: #f1efe8;
+    --line: #dfdcd3;
+    --line-strong: #c9c5b9;
+    --spruce: #1a6a51;
+    --spruce-soft: #e2efe9;
+    --amber: #8a5310;
+    --amber-soft: #f5ead7;
+    --red: #97392d;
+    --red-soft: #f6e5e1;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: Georgia, "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ink: #e7ece9; --muted: #9aa8a2; --paper: #121716; --panel: #191f1e;
+      --panel-2: #212927; --line: #2c3533; --line-strong: #3c4744;
+      --spruce: #63c29e; --spruce-soft: #16302a; --amber: #d7a052;
+      --amber-soft: #33291a; --red: #e08a7c; --red-soft: #34211e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e7ece9; --muted: #9aa8a2; --paper: #121716; --panel: #191f1e;
+    --panel-2: #212927; --line: #2c3533; --line-strong: #3c4744;
+    --spruce: #63c29e; --spruce-soft: #16302a; --amber: #d7a052;
+    --amber-soft: #33291a; --red: #e08a7c; --red-soft: #34211e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+         font-family: var(--sans); font-size: 16px; line-height: 1.62; }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 1.5rem; }
+  header { border-bottom: 1px solid var(--line-strong); padding: 3.2rem 0 2rem; }
+  .eyebrow { margin: 0 0 .85rem; font-family: var(--mono); font-size: .74rem;
+             letter-spacing: .14em; text-transform: uppercase; color: var(--spruce); }
+  h1 { margin: 0; font-family: var(--serif); font-weight: 700;
+       font-size: clamp(2.1rem, 5vw, 3.2rem); line-height: 1.06;
+       text-wrap: balance; letter-spacing: -.015em; }
+  .standfirst { max-width: 62ch; margin: 1.05rem 0 0; font-size: 1.08rem; color: var(--muted); }
+  main { display: flex; flex-direction: column; gap: 3.2rem; padding: 2.6rem 0 6rem; }
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  h2 { margin: 0; font-family: var(--serif); font-size: 1.6rem; font-weight: 700;
+       line-height: 1.2; text-wrap: balance; }
+  h3 { margin: 0; font-family: var(--serif); font-size: 1.14rem; font-weight: 700; }
+  p { margin: 0; max-width: 68ch; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--panel-2);
+         padding: .1em .32em; border-radius: 3px; }
+  .verdict { background: var(--panel); border: 1px solid var(--line-strong);
+             border-left: 3px solid var(--amber); border-radius: 4px;
+             padding: 1.25rem 1.45rem; display: flex; flex-direction: column; gap: .7rem; }
+  .verdict.ok { border-left-color: var(--spruce); }
+  .verdict p { max-width: 72ch; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); font-size: .89rem; }
+  th, td { text-align: left; padding: .58rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: .69rem; letter-spacing: .09em;
+       text-transform: uppercase; color: var(--muted); background: var(--panel-2);
+       font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.m { font-family: var(--mono); font-size: .84rem; white-space: nowrap;
+         font-variant-numeric: tabular-nums; }
+  td.name { font-family: var(--mono); font-size: .84rem; white-space: nowrap; }
+  tr.hl td { background: var(--spruce-soft); }
+  tr.warn td { background: var(--amber-soft); }
+  .chip { font-family: var(--mono); font-size: .71rem; letter-spacing: .04em;
+          text-transform: uppercase; padding: .18rem .5rem; border-radius: 3px;
+          font-weight: 600; white-space: nowrap; }
+  .c-ok { color: var(--spruce); background: var(--spruce-soft); }
+  .c-noise { color: var(--muted); background: var(--panel-2); }
+  .c-warn { color: var(--amber); background: var(--amber-soft); }
+  .finding { border-left: 2px solid var(--line-strong); padding-left: 1.15rem;
+             display: flex; flex-direction: column; gap: .55rem; }
+  .finding.key { border-left-color: var(--amber); }
+  .evidence { font-family: var(--mono); font-size: .82rem; line-height: 1.7;
+              background: var(--panel); border: 1px solid var(--line);
+              border-radius: 4px; padding: .75rem .9rem; color: var(--muted);
+              overflow-x: auto; }
+  .evidence strong { color: var(--ink); font-weight: 600; }
+  .rec { font-size: .96rem; padding-left: .85rem; border-left: 2px solid var(--spruce); }
+  ul.plain { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .4rem; }
+  ul.plain li { max-width: 68ch; }
+  .findings { display: flex; flex-direction: column; gap: 1.5rem; }
+  footer { border-top: 1px solid var(--line); padding: 1.4rem 0 3rem;
+           color: var(--muted); font-size: .85rem; }
+</style>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Architecture step · results · 17 Aug 2026</p>
+    <h1>The adapters disagree</h1>
+    <p class="standfirst">The package path is reclaimed, six modules are promoted, and all 17 report
+      producers still reproduce exactly. The one thing that did not go to plan is the thing you
+      asked to have checked: <code>pi_models</code> and <code>pi_core</code> do not produce the
+      same Boltz-2.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <div class="verdict">
+      <p><strong>Steps 1–3 are done and verified. Step 4 is blocked on a decision.</strong>
+        Adopting <code>pi_models</code> as it is currently built would change the MSA regime from
+        <em>all 6,857 alignment rows</em> to <em>a random 1,024-row draw</em> — which is exactly
+        the property <code>pi_core</code> was configured to avoid. It costs 0.27 Å on expected
+        distance, and it is a semantic change, not numerical noise.</p>
+      <p>It is fixable, and the fix is small. But it should be made and re-measured before
+        <code>pi_models</code> becomes the collection path.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The promotion did not move a single number</h2>
+    <p>All 17 producers were rerun from the git checkout — not the deployed mirror, which does not
+      carry <code>src/</code> — using the <code>argv</code> each archive records. Compared against
+      this morning's baseline run of the same producers before anything moved.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Producer</th><th>vs baseline</th><th>vs archive</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td class="name">13 producers</td><td class="m">0.000e+00</td><td class="m">0.000e+00</td>
+              <td><span class="chip c-ok">exact</span> chem, bw, heldout, xmodel, xmodel_io, depth,
+                  steer, basis, rotate, jac, scrutiny, transfer_inductive, transfer_full</td></tr>
+          <tr><td class="name">svd_dz_v3</td><td class="m">2.925e-14</td><td class="m">3.009e-14</td>
+              <td><span class="chip c-noise">float noise</span></td></tr>
+          <tr><td class="name">layer_match</td><td class="m">2.220e-16</td><td class="m">1.041e-07</td>
+              <td><span class="chip c-noise">noise</span> archive gap is the known pre-x64 one</td></tr>
+          <tr><td class="name">svd_ds_v1</td><td class="m">8.957e-04</td><td class="m">1.222e-04</td>
+              <td><span class="chip c-noise">known band</span> identical runs differ by the same 8.96e-04</td></tr>
+          <tr><td class="name">gate_probe</td><td class="m">1.701e-06</td><td class="m">1.701e-06</td>
+              <td><span class="chip c-noise">new: not bit-stable</span> see below</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><code>transfer_full</code> shows <code>2.181e-04</code> against <code>report_master/data</code>
+      only because that archived copy is still the pre-x64 one; against the current
+      <code>runs/</code> value it is exact.</p>
+
+    <div class="finding">
+      <h3>A new nondeterministic producer, found by running unchanged code twice</h3>
+      <p><code>gate_probe</code> moved by 1.7e-6 and looked like the one real regression. Running
+        the same code a second time settled it:</p>
+      <div class="evidence">
+        baseline vs run 1  <strong>1.701e-06</strong><br>
+        run 1 vs run 2     <strong>8.897e-07</strong>  &lt;- same order, same code<br>
+        baseline vs run 2  <strong>1.577e-06</strong>
+      </div>
+      <p>It reduces <code>jax.vmap</code> over the Pairformer transitions in explicit float32, so
+        the variation is the accelerator's. It now sits beside <code>analyze_svd</code> in the
+        known-unstable set, recorded in <code>AGENTS.md</code> so the next person does not spend
+        the same hour on it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The adapter question, measured</h2>
+    <p>One sequence, one alignment, both adapters, recycle count and PRNG key fixed. MSA depth is
+      reported first, because if the two see different alignments then nothing downstream is a
+      statement about adapters at all.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Quantity</th><th>max abs</th><th>mean abs</th><th>correlation</th></tr></thead>
+        <tbody>
+          <tr><td>expected distance</td><td class="m">0.272 Å</td><td class="m">0.020 Å</td><td class="m">0.99998</td></tr>
+          <tr><td>distogram logits</td><td class="m">6.86</td><td class="m">0.154</td><td class="m">0.99958</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="findings">
+      <div class="finding">
+        <h3>It is not an off-by-one in the recycle loop</h3>
+        <p>That was the first hypothesis, because a recycle mismatch produces exactly this
+          signature: correlation of 0.9999-something with a visibly non-zero absolute difference.
+          Sweeping the mosaic side from 1 to 5 recycles against <code>pi_core</code> at 3 refutes
+          it — the match is at 3, and its neighbours are five times worse.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>pi_models recycles</th><th>expected-distance max abs</th><th>correlation</th></tr></thead>
+            <tbody>
+              <tr><td class="m">1</td><td class="m">1.752 Å</td><td class="m">0.998937</td></tr>
+              <tr><td class="m">2</td><td class="m">1.384 Å</td><td class="m">0.999402</td></tr>
+              <tr class="hl"><td class="m">3</td><td class="m">0.271 Å</td><td class="m">0.999980</td></tr>
+              <tr><td class="m">4</td><td class="m">1.251 Å</td><td class="m">0.999542</td></tr>
+              <tr><td class="m">5</td><td class="m">1.108 Å</td><td class="m">0.999641</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="finding key">
+        <h3>It is the MSA regime, and your own docstring predicted it</h3>
+        <p>Introspecting the two built models:</p>
+        <div class="evidence">
+          pi_models  wrapper.model.msa_module.<strong>subsample_msa = True</strong>, num_subsampled_msa = 1024<br>
+          pi_core    load_model(<strong>subsample_msa=False</strong>)
+        </div>
+        <p><code>pi_core.load_model</code> already says this in words — <em>“deliberate and differs
+          from mosaic's design-time default: for interpretability we need the MSA depth to be an
+          exact, controlled quantity, not a random 1024-row draw that changes per key.”</em> What
+          is new is the price: <strong>0.27 Å</strong> on expected distance.</p>
+        <p>It does not show up as an input difference, which is what makes it dangerous. Depth in
+          the <em>features</em> matched at 6,857 on both sides; the subsampling happens inside the
+          MSA module, downstream of featurisation, where a depth check does not look.</p>
+        <p>The confirming experiment: cap the alignment at 894 rows, below the 1,024 threshold, so
+          there is nothing to subsample. The disagreement collapses.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Alignment</th><th>ed max abs</th><th>ed mean abs</th><th>correlation</th></tr></thead>
+            <tbody>
+              <tr class="warn"><td>6,857 rows (subsampled to 1,024)</td><td class="m">0.272 Å</td><td class="m">0.0202 Å</td><td class="m">0.99998</td></tr>
+              <tr class="hl"><td>894 rows (nothing to subsample)</td><td class="m">0.071 Å</td><td class="m">0.0030 Å</td><td class="m">0.999999</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Most of the gap was the draw. A residual remains at matched depth — 0.071 Å max,
+          0.003 Å mean — which is not the MSA and not the recycle count, and is not yet explained.</p>
+      </div>
+
+      <div class="finding">
+        <h3>Fixable, but not through the constructor</h3>
+        <div class="evidence">
+          Boltz2.__init__(self, cache_path: pathlib.Path | None = None)   <em>&lt;- no MSA arguments</em><br>
+          wrapper.model.msa_module is a frozen <strong>equinox Module</strong>
+        </div>
+        <p class="rec">So the <code>pi_models</code> Boltz-2 factory has to replace the flag after
+          construction with <code>eqx.tree_at</code>, rather than passing it in. That is the change
+          I would make before adopting <code>pi_models</code> — then rerun this comparison and
+          decide whether the remaining 0.003 Å mean is an acceptable tolerance or worth chasing.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What else changed</h2>
+    <ul class="plain">
+      <li><strong>The package path is reclaimed.</strong> The May-era generation is gone — 41 package
+        files including 14 MB of notebooks, plus the 11 <code>scripts/</code> files that imported it,
+        the 5 launchers whose drivers those were, and 9 tests. Recoverable with
+        <code>git show fcceb3f:&lt;path&gt;</code>.</li>
+      <li><strong>Six modules promoted</strong> — statistics, basis, chemistry, metrics, protocol,
+        and the archive seam. Each keeps a six-line alias in <code>jax_harness</code>, so roughly
+        60 call sites work untouched and the move could be verified before anything was rewritten.</li>
+      <li><strong><code>records.py</code> exists now.</strong> <code>pi_models</code> has cited it as
+        <code>pi_schema.py</code> since it was written; it had never existed in any commit. Its
+        checks are the three models' real divergences — bin grids that differ while bin
+        <em>counts</em> match, per-atom versus per-token pLDDT, the unsqueezed sample axis. 25 tests
+        pass, all of them asserting a refusal.</li>
+      <li><strong>A provenance bug, caught by the move.</strong> <code>build_master_report</code>
+        hashed a flat list of <code>jax_harness</code> basenames as its code identity. After the
+        promotion that would have hashed the six-line <code>pi_protocol</code> alias and reported it
+        as the identity of every protocol block on the page. The list is repo-relative now.</li>
+      <li><strong><code>checkout.sbatch</code></strong> runs the repository instead of the mirror,
+        which is what verifying a moved library requires — and what the plan's acceptance test
+        (“jobs submitted from a clean checkout”) already asked for.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Where this leaves the sequence</h2>
+    <p>Steps 1 through 3 are complete and verified. Step 4 — unifying the adapters — now has a
+      concrete blocker rather than an open question, which is the useful outcome: the equivalence
+      check you asked for found something a code review would not have.</p>
+    <p>My recommendation is to make the <code>eqx.tree_at</code> fix, rerun
+      <code>exp_adapter_equiv.py</code>, and treat the residual as the tolerance decision. If the
+      residual survives at matched depth, it is worth understanding before <code>pi_core</code>
+      stops being the thing that produces captures — it is 0.003 Å in the mean, but it is
+      systematic, and the whole point of the shared basis is that small systematic shifts are what
+      it measures.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Commits <code>fcceb3f</code> → <code>32bb749</code>. Verification data in
+    <code>prot_interp_files/runs/check_20260817/</code>; the adapter measurements in
+    <code>adapter_equiv*.json</code>.
+  </div>
+</footer>
