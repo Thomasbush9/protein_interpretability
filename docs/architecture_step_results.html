@@ -107,13 +107,16 @@
 
   <section>
     <div class="verdict">
-      <p><strong>Steps 1–3 are done and verified. Step 4 is blocked on a decision.</strong>
-        Adopting <code>pi_models</code> as it is currently built would change the MSA regime from
-        <em>all 6,857 alignment rows</em> to <em>a random 1,024-row draw</em> — which is exactly
-        the property <code>pi_core</code> was configured to avoid. It costs 0.27 Å on expected
-        distance, and it is a semantic change, not numerical noise.</p>
-      <p>It is fixable, and the fix is small. But it should be made and re-measured before
-        <code>pi_models</code> becomes the collection path.</p>
+      <p><strong>Steps 1–3 are done and verified. The adapter question now has a measured
+        answer.</strong> <code>pi_models</code> builds Boltz-2 with the MSA subsampled to 1,024
+        rows where <code>pi_core</code> uses the whole alignment. Measured across two assays, that
+        costs essentially nothing scientifically — the mutation signal survives at correlation
+        0.998, which is no worse than two subsample draws agree with each other.</p>
+      <p>What it costs is <em>exactness</em>. The full alignment reproduces <code>dz_site</code>
+        bit-for-bit across keys; the subsample does not. Since every archived capture was made
+        without subsampling, keeping the full alignment is worth about four lines of code — but
+        this is a reproducibility call, not a scientific one, and the numbers support either
+        choice.</p>
     </div>
   </section>
 
@@ -225,6 +228,72 @@
           0.003 Å mean — which is not the MSA and not the recycle count, and is not yet explained.</p>
       </div>
 
+      <div class="finding key">
+        <h3>So is the subsample good enough? Measured: yes on accuracy, no on exactness</h3>
+        <p>The follow-up experiment varies <em>only</em> the flag — both arms through
+          <code>pi_core</code> and the same capture code, so the adapter is not confounded with the
+          regime the way the comparison above was. Two assays, 32 variants each. Because
+          <code>exp_gym2</code> caps alignments at 2,048 rows, both arms are a 2,048 → 1,024 draw
+          regardless of the protein's native depth.</p>
+        <p>The quantity that decides it is <code>dz_site</code> — the variant-minus-wild-type
+          difference the shared basis is built on. Every result in the project is a difference, and
+          a random draw that moves between the two halves of a pair lands in
+          <code>dz_site</code> as though the mutation had caused it. So the comparison that matters
+          is not full-vs-subsample on its own, but full-vs-subsample <em>against</em>
+          subsample-vs-subsample:</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>dz_site comparison</th><th>ARGR</th><th>CATR</th><th>Reading</th></tr></thead>
+            <tbody>
+              <tr><td>full vs subsample</td><td class="m">0.9980</td><td class="m">0.9987</td><td>the regime change</td></tr>
+              <tr><td>subsample vs subsample</td><td class="m">0.9971</td><td class="m">0.9983</td><td>the noise floor — re-drawing alone</td></tr>
+              <tr class="hl"><td>full vs full, new key</td><td class="m">—</td><td class="m">1.000000</td><td>with no subsampling the key changes nothing</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The regime change costs <strong>no more than re-drawing does</strong>. There is no
+          systematic bias; the whole discrepancy is draw variance. Wild-type structure at matched
+          key is effectively unchanged — CA distance matrix 0.022 Å mean, pLDDT within 0.011 — and
+          the endpoint Spearman moves by about 0.02 with no consistent sign, far inside the
+          estimation error at n=32.</p>
+      </div>
+
+      <div class="finding">
+        <h3>The control arm earned its keep</h3>
+        <p>The first run showed a 9.8 Å coordinate spread, which looked like the subsample moving
+          the structure. It was not. Coordinates come from the diffusion sampler, which is
+          stochastic and keyed by the same seed the MSA draw uses, so arms at different seeds
+          changed both at once. Adding a full-alignment arm at a different key — where subsampling
+          cannot act — separates them:</p>
+        <div class="evidence">
+          full vs <strong>full_key1</strong>   CA max 2.964 Å, mean 0.4431, pLDDT corr 0.9421<br>
+          full vs <strong>sub_key1</strong>    CA max 2.949 Å, mean 0.4405, pLDDT corr 0.9468
+        </div>
+        <p>Indistinguishable. All of the coordinate variation is the sampler; none of it is the
+          alignment. Worth remembering as a general trap: never compare structures across different
+          PRNG seeds and attribute the difference to whatever else you changed.</p>
+      </div>
+
+      <div class="finding key">
+        <h3>What it does cost is reproducibility</h3>
+        <p>With the full alignment <code>dz_site</code> is bit-reproducible across keys —
+          correlation exactly <code>1.000000</code>, and the endpoint Spearman identical to four
+          decimals. Under subsampling it is not. Adopting the subsample converts a deterministic
+          collection step into a stochastic one at the ~1e-3 level.</p>
+        <p>That matters here more than the accuracy question does, for two specific reasons. Every
+          archived capture was produced with <code>subsample_msa=False</code>, so old-versus-new
+          comparisons would inherit draw noise rather than the exact zeros the regression harness
+          currently returns. And this session has just spent real effort establishing which
+          producers are bit-stable and which are not — adding a new source of irreproducibility to
+          the collection step runs directly against that.</p>
+        <p class="rec"><b>Recommendation:</b> keep the full alignment. Not because the subsample is
+          inaccurate — it is not, and by the accuracy criterion alone it would be fine to adopt —
+          but because the fix costs about four lines and buys exact reproducibility against every
+          existing archive. If you would rather take the simpler adapter and accept stochastic
+          captures, the measurements above support that too; it is a reproducibility decision, not
+          a scientific one.</p>
+      </div>
+
       <div class="finding">
         <h3>Fixable, but not through the constructor</h3>
         <div class="evidence">
@@ -269,12 +338,11 @@
     <p>Steps 1 through 3 are complete and verified. Step 4 — unifying the adapters — now has a
       concrete blocker rather than an open question, which is the useful outcome: the equivalence
       check you asked for found something a code review would not have.</p>
-    <p>My recommendation is to make the <code>eqx.tree_at</code> fix, rerun
-      <code>exp_adapter_equiv.py</code>, and treat the residual as the tolerance decision. If the
-      residual survives at matched depth, it is worth understanding before <code>pi_core</code>
-      stops being the thing that produces captures — it is 0.003 Å in the mean, but it is
-      systematic, and the whole point of the shared basis is that small systematic shifts are what
-      it measures.</p>
+    <p>My recommendation is to make the <code>eqx.tree_at</code> fix so <code>pi_models</code> runs
+      the full alignment, then rerun <code>exp_adapter_equiv.py</code> and treat the remaining
+      0.003 Å mean as the tolerance decision. That residual is not the MSA and not the recycle
+      count, and it is worth understanding before <code>pi_core</code> stops being the thing that
+      produces captures — small systematic shifts are exactly what the shared basis measures.</p>
   </section>
 
 </main>
