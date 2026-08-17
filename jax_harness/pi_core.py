@@ -113,14 +113,40 @@ def _opt(p: Path):
     return p if p.exists() else None
 
 
-def load_model(ckpt: Path = BOLTZ_CACHE / "boltz2_conf.ckpt", subsample_msa: bool = False):
+def load_model(ckpt: Path = BOLTZ_CACHE / "boltz2_conf.ckpt", subsample_msa: bool = False,
+               backend: str = "joltz"):
     """Load Boltz-2 into joltz.
 
     `subsample_msa=False` is deliberate and differs from mosaic's design-time
     default: for interpretability we need the MSA depth to be an *exact,
     controlled* quantity, not a random 1024-row draw that changes per key.
     Control depth by truncating the a3m instead.
+
+    `backend` selects WHERE the same network comes from, and the two are not
+    bit-identical:
+
+        joltz    this function's own checkpoint load. Every archived Boltz-2
+                 capture was produced this way, so it stays the default.
+        mosaic   `pi_models.load("boltz2")`, unwrapped. One loader for all four
+                 models instead of a Boltz-2-only path beside a general one.
+
+    Either way the object returned is the joltz network, so the trunk
+    instrumentation below is unaffected -- mosaic's wrapper holds exactly this
+    in `.model`, which is why the unification is a swap of the loader and not a
+    rewrite of the capture code.
+
+    Measured on ARGR at matched MSA regime, the two agree on expected distance
+    to 0.030 A max / 0.0019 A mean (bin width is 0.3125 A). Small, but not zero,
+    which is why the default does not move on its own -- see
+    `exp_backend_equiv` for the dz_site comparison that decides whether it can.
     """
+    if backend not in ("joltz", "mosaic"):
+        raise ValueError(f"backend must be 'joltz' or 'mosaic', got {backend!r}")
+    if backend == "mosaic":
+        import pi_models
+        wrapper = pi_models.load(
+            "boltz2", msa="subsample" if subsample_msa else "full")
+        return wrapper.model
     from dataclasses import asdict
 
     import torch  # noqa: F401  (checkpoint load only; not in the hot path)
