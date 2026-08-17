@@ -66,9 +66,18 @@ matched nothing, costs more than no test at all.
 
 The real regression test is scientific, not unit-level. Any change touching the
 library must rerun the 17 report producers and diff them against their archives
-(`prot_interp_files/runs/check_20260817/`). Expect exact zeros, with two known
-exceptions: `analyze_svd`'s prediction-ordered curves are not bit-stable across
-jobs (~1e-3 on per-assay entries), and its SVD carries ~3e-14 of float noise.
+(`prot_interp_files/runs/check_20260817/`). Expect exact zeros, with three known
+exceptions — all measured by running the same code twice, which is the only way
+to tell a real change from this:
+
+- `analyze_svd` — prediction-ordered curves move up to ~1e-3 per assay between
+  identical runs; its SVD also carries ~3e-14 of float noise.
+- `probe_gate` — `live_by_layer` moves ~1e-6 between identical runs. It reduces
+  `jax.vmap` over the Pairformer transitions in explicit float32, so the
+  variation is the accelerator's, not the code's.
+
+Never conclude a change caused a difference until the unchanged code has been
+run twice. Two findings this session that looked like regressions were not.
 
 ## Commit & Pull Request Guidelines
 Recent commits use short, imperative, lower-case summaries such as `plotting attention with rollout`. Keep commits focused and similarly concise. Pull requests should include:

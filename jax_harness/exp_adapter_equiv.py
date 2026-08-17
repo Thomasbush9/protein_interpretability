@@ -72,6 +72,15 @@ def main():
     ap.add_argument("--a3m", required=True, help="alignment for the WT sequence")
     ap.add_argument("--seq", required=True, help="the WT sequence itself")
     ap.add_argument("--recycles", type=int, default=3)
+    ap.add_argument("--sweep", default="",
+                    help="comma-separated recycle counts to try on the "
+                         "pi_models side against pi_core at --recycles. The "
+                         "two loops may not mean the same thing by 'a "
+                         "recycle': pi_core runs recycling_steps iterations "
+                         "total (n-1 plain, then one capturing), and an "
+                         "off-by-one there produces exactly the signature of "
+                         "a near-miss -- correlation ~0.9999 with a visible "
+                         "absolute difference.")
     ap.add_argument("--msa-cap", type=int, default=None)
     ap.add_argument("--work", required=True)
     ap.add_argument("--out", required=True)
@@ -112,8 +121,33 @@ def main():
     # The new schema, applied to the adapter that is being kept.
     records.validate(ex)
 
+    # Depth in the FEATURES is not depth in the MODEL. `subsample_msa` is a
+    # construction argument on the MSA module, so a wrapper can hold all 6857
+    # rows and still use a 1024-row draw of them. pi_core sets it False on
+    # purpose; whatever mosaic's Boltz2() defaults to is recorded here rather
+    # than assumed.
+    def msa_args_of(obj):
+        for attr in ("msa_args", "msa_module_args", "_msa_args"):
+            if hasattr(obj, attr):
+                return {k: v for k, v in vars(getattr(obj, attr)).items()} \
+                    if hasattr(getattr(obj, attr), "__dict__") \
+                    else dict(getattr(obj, attr))
+        inner = getattr(obj, "model", None)
+        mm = getattr(inner, "msa_module", None) if inner is not None else None
+        if mm is not None:
+            return {k: getattr(mm, k) for k in
+                    ("subsample_msa", "num_subsampled_msa") if hasattr(mm, k)}
+        return None
+
     result["msa_depth"] = {"pi_core": depth_core, "pi_models": depth_models,
                            "match": depth_core == depth_models}
+    try:
+        result["msa_module_args"] = {
+            "pi_models_wrapper": msa_args_of(wrapper),
+            "pi_core": {"subsample_msa": False, "num_subsampled_msa": 1024},
+        }
+    except Exception as exc:                       # introspection must not fail the run
+        result["msa_module_args"] = {"error": repr(exc)}
     result["bins"] = {"pi_core": int(logits_core.shape[-1]),
                       "pi_models": int(ex.n_bins)}
 
@@ -129,6 +163,29 @@ def main():
     result["distogram_logits"] = summarise(logits_core, ex.logits)
     result["expected_distance"] = summarise(ed_core, ex.ed)
     result["plddt_shape"] = {"pi_models": list(np.asarray(ex.plddt).shape)}
+
+    if a.sweep:
+        # Which recycle count on the mosaic side reproduces pi_core's run? If
+        # one of them lands at ~0 while the others sit near the figure above,
+        # the adapters agree and only their COUNTING differs -- a mapping, not
+        # a numerical discrepancy.
+        sweep = {}
+        for k in [int(s) for s in a.sweep.split(",")]:
+            exk = pi_models.run_one(wrapper, seq, str(a3m), recycles=k,
+                                    key=jax.random.key(0), name="boltz2",
+                                    work=work)
+            sweep[k] = {
+                "distogram_logits": summarise(logits_core, exk.logits),
+                "expected_distance": summarise(ed_core, exk.ed),
+            }
+            print(f"  pi_models recycles={k}: "
+                  f"ed max_abs={sweep[k]['expected_distance']['max_abs']:.4f} "
+                  f"corr={sweep[k]['expected_distance']['corr']:.8f}", flush=True)
+        result["recycle_sweep"] = sweep
+        best = min(sweep, key=lambda k: sweep[k]["expected_distance"]["max_abs"])
+        result["best_match"] = {
+            "pi_core_recycles": a.recycles, "pi_models_recycles": best,
+            "ed_max_abs": sweep[best]["expected_distance"]["max_abs"]}
 
     pi_archive.write_result(Path(a.out), result, protocol=PROTOCOL)
     print(json.dumps({k: v for k, v in result.items()
