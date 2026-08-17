@@ -24,6 +24,9 @@ dependencies = [
     "torch>=2.11.0",
 ]
 
+[project.scripts]
+pi = "protein_interpretability.cli.main:main"
+
 [project.optional-dependencies]
 esm = [
     "esm",
