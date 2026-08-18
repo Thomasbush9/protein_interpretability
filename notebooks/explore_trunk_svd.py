@@ -273,5 +273,111 @@ def _(assay_pick, mo, n_layers, peak, trace):
     return
 
 
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## The shared basis
+
+        Each assay is a different protein, yet the 128 pair channels mean the
+        same thing in all of them. That is the claim worth testing, and the test
+        is whether one decomposition fitted across every assay carries signal in
+        each — not whether the reconstruction error is small.
+
+        Per-assay z-score, pool, subtract the pooled mean, SVD. The sign of each
+        leading component is then fixed against a reference quantity, because an
+        SVD determines a direction only up to sign, and "PC2" means nothing until
+        that is pinned.
+        """
+    )
+    return
+
+
+@app.cell
+def _(RUNS, artifacts, cohort, np):
+    from protein_interpretability.analysis import basis as basis_mod
+
+    blocks, orient_ref = {}, {}
+    for _assay in cohort:
+        _c = artifacts.load_capture(RUNS / f"gym2s_{_assay.id}.npz")
+        _k = _assay.id.split("_")[0]
+        blocks[_k] = np.asarray(_c.field("dz_site"), float)
+        orient_ref[_k] = np.asarray(_c.field("kl_glob"), float)[:, -1]
+
+    shared = basis_mod.fit(
+        blocks, layer=-1,                 # the final layer, measured not asserted
+        orient_on="kl_glob", orient_ref=orient_ref, orient_k=2,
+        n_boot=2000, seed=0,
+    )
+    return basis_mod, blocks, orient_ref, shared
+
+
+@app.cell
+def _(MUTED, SERIES_1, axes, np, shared):
+    n_show = 10
+    ev = np.asarray(shared.ev)[:n_show]
+
+    fig_ev, ax_ev = axes(
+        height=3.0,
+        xlabel="component", ylabel="share of variance",
+        # Not "most of the variance" -- PC1 and PC2 together are 39%, and the
+        # tail is long. The interesting claim is not that the basis compresses
+        # well; it is that one of these components transfers across proteins.
+        title="PC1 and PC2 lead, ahead of a long tail",
+    )
+    _bars = ax_ev.bar(np.arange(1, n_show + 1), ev, color=SERIES_1,
+                      width=0.7, zorder=3)
+    # Label only the two the report actually uses.
+    for _i in (0, 1):
+        ax_ev.text(_i + 1, ev[_i] + 0.008, f"{ev[_i]:.1%}", ha="center",
+                   color=MUTED, fontsize=9)
+    ax_ev.set_xticks(np.arange(1, n_show + 1))
+    ax_ev.set_ylim(0, max(ev) * 1.18)
+    fig_ev.tight_layout()
+    fig_ev
+    return (ev,)
+
+
+@app.cell
+def _(ev, mo, np):
+    mo.md(
+        f"""
+        PC1 takes {ev[0]:.1%} and PC2 {ev[1]:.1%}; the first eight together
+        reach {np.cumsum(ev)[7]:.1%}. **PC2 is the one the report is about** —
+        PC1 tracks substitution volume and PC3 hydropathy, neither of which is
+        the stability axis. That is why the causal experiment steers PC2 and
+        uses PC1 and PC3 as controls: if all components behaved alike, the
+        effect would be about perturbation size rather than about this
+        direction.
+        """
+    )
+    return
+
+
+@app.cell
+def _(INK, MUTED, SERIES_1, artifacts, assay_pick, axes, np, RUNS, shared, st):
+    _cap = artifacts.load_capture(RUNS / f"gym2s_{assay_pick.value}.npz")
+    _dz = np.asarray(_cap.field("dz_site"), float)
+    _y = np.asarray(_cap.field("score"), float)
+
+    pc = shared.project(_dz[:, -1, :], layer=-1)
+    pc2 = pc[:, 1]
+    rho_pc2 = float(st.spearman(pc2, _y))
+
+    fig_pc, ax_pc = axes(
+        height=3.6,
+        xlabel="PC2 score", ylabel="measured stability",
+        title=f"PC2 against the assay, {assay_pick.value}",
+    )
+    ax_pc.axhline(0, color=MUTED, linewidth=1, zorder=1)
+    ax_pc.scatter(pc2, _y, s=26, color=SERIES_1, alpha=0.75,
+                  edgecolor="white", linewidth=0.6, zorder=3)
+    ax_pc.text(0.02, 0.06, f"Spearman {rho_pc2:+.3f}   n = {len(_y)}",
+               transform=ax_pc.transAxes, color=INK, fontsize=9)
+    fig_pc.tight_layout()
+    fig_pc
+    return pc, pc2, rho_pc2
+
+
 if __name__ == "__main__":
     app.run()

@@ -95,8 +95,21 @@ def _svd(M):
     """
     import contextlib
 
-    import jax.numpy as jnp
     M = np.asarray(M, np.float64)
+
+    # There are TWO ways jax can be unavailable and only one was handled: the
+    # x64 context missing, and jax not being installed at all. The second is the
+    # normal case in the analysis environment -- jax lives in the mosaic
+    # container -- so `import jax.numpy` at the top of this function made every
+    # basis fit require a model environment, which is precisely what analysis is
+    # supposed not to need. numpy is float64 natively, so the fallback is not a
+    # degraded path; it is the same precision by a different route.
+    try:
+        import jax.numpy as jnp
+    except ImportError:
+        s, vt = np.linalg.svd(M, full_matrices=False)[1:]
+        return vt, s ** 2 / max(float((s ** 2).sum()), EPS)
+
     try:
         from jax.experimental import enable_x64
         ctx = enable_x64()

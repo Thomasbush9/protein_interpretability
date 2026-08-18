@@ -85,6 +85,29 @@ def test_package_import_is_cheap():
     assert not (top & (BACKENDS | NUMERICS)), f"top-level package imports {top}"
 
 
+def test_the_basis_fits_without_jax_installed():
+    """`analysis.basis` reached for `jax.numpy` unguarded, so every basis fit
+    required a model environment -- the one thing analysis is supposed not to
+    need. jax lives in the mosaic container, not in the analysis venv, so this
+    failed for anyone running the documented `uv sync`.
+
+    numpy is float64 natively, so the fallback is the same precision by another
+    route, not a degraded path.
+    """
+    import numpy as np
+
+    from protein_interpretability.analysis.basis import _svd
+
+    rng = np.random.default_rng(0)
+    M = rng.normal(size=(40, 8))
+    V, ev = _svd(M)
+    assert V.shape == (8, 8)
+    assert abs(float(ev.sum()) - 1.0) < 1e-12
+    # Orthonormality at float64, which is what the precision guard is about:
+    # float32 lands near 1e-06 on a matrix this size.
+    assert np.abs(V @ V.T - np.eye(8)).max() < 1e-12
+
+
 def test_artifacts_module_is_backend_free():
     """Both sides read artifacts, so the storage seam has to stay importable
     from an environment with no model in it."""
