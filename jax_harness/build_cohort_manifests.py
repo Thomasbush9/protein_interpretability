@@ -55,6 +55,13 @@ COHORTS = {
 STRIP = {"basis_assays": "gym2s_", "heldout_assays": "gym3p3_",
          "cross_model_assays": "xm_boltz2_r1_", "intervention_assays": "steerall_"}
 
+# The smoke cohort is one assay, chosen for being the smallest thing that is
+# still a real assay: ARGR is 69 residues with a 7056-row alignment, so a slice
+# over a handful of its variants exercises the whole path in minutes rather
+# than hours. It is deliberately a SUBSET of basis_assays, so anything it
+# produces can be compared against an archive that already exists.
+SMOKE_ASSAY = "ARGR_ECOLI_Tsuboyama_2023_1AOY"
+
 
 def sha256(p: Path) -> str:
     h = hashlib.sha256()
@@ -172,6 +179,20 @@ def main():
         path.write_text(yaml_dump(doc))
         flag = f"  MISSING INPUTS: {missing}" if missing else ""
         print(f"{name:22s} {len(assays):3d} assays -> {path}{flag}")
+
+    smoke = {
+        "cohort": "smoke_pairformer",
+        "description": ("One assay for the pair-layer vertical slice. A subset "
+                        "of basis_assays on purpose, so anything collected "
+                        "against it can be compared with an archive that "
+                        "already exists."),
+        "derived_from": f"{SMOKE_ASSAY}, chosen as the smallest real assay",
+        "n_assays": 1,
+        "assays": [describe(SMOKE_ASSAY)],
+    }
+    smoke_path = out_dir / "smoke_pairformer.yaml"
+    smoke_path.write_text(yaml_dump(smoke))
+    print(f"{'smoke_pairformer':22s}   1 assays -> {smoke_path}")
 
     # The disjointness heldout_v1's claim rests on, checked rather than assumed.
     basis = {p.name[len("gym2s_"):-4] for p in runs.glob("gym2s_*.npz")}
