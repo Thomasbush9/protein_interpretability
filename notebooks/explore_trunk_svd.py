@@ -379,5 +379,134 @@ def _(INK, MUTED, SERIES_1, artifacts, assay_pick, axes, np, RUNS, shared, st):
     return pc, pc2, rho_pc2
 
 
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## The headline
+
+        Everything above looked at one assay at a time. The claim in the report
+        is stronger: fit on eleven proteins, test on the twelfth, and the probe
+        still works — so the direction is not a per-protein artefact.
+
+        This is the +0.758 the report opens with, recomputed here from the same
+        captures.
+        """
+    )
+    return
+
+
+@app.cell
+def _():
+    from protein_interpretability.analysis.probes import leave_one_group_out
+    return (leave_one_group_out,)
+
+
+@app.cell
+def _(RUNS, artifacts, blocks, cohort, leave_one_group_out, np):
+    # The assay score travels with each capture, so it is read from the same
+    # archives the blocks came from rather than re-derived from the CSVs and
+    # re-aligned by mutant name.
+    probe_blocks = {}
+    for _assay in cohort:
+        _k = _assay.id.split("_")[0]
+        _c = artifacts.load_capture(RUNS / f"gym2s_{_assay.id}.npz")
+        probe_blocks[_k] = {
+            "X": blocks[_k][:, -1, :],
+            "y": np.asarray(_c.field("score"), float),
+        }
+
+    per_assay = leave_one_group_out(probe_blocks, lam=10.0)
+    pooled = float(np.mean(list(per_assay.values())))
+    return per_assay, pooled, probe_blocks
+
+
+@app.cell
+def _(INK, MUTED, SERIES_1, SERIES_2, axes, np, per_assay, pooled):
+    names = sorted(per_assay, key=lambda k: per_assay[k])
+    vals = [per_assay[n] for n in names]
+
+    fig_hl, ax_hl = axes(
+        height=3.8,
+        xlabel="Spearman on the held-out assay", ylabel="",
+        title="Fit on eleven proteins, tested on the twelfth",
+    )
+    ax_hl.barh(np.arange(len(names)), vals, color=SERIES_1, height=0.66,
+               zorder=3)
+    ax_hl.axvline(pooled, color=SERIES_2, linewidth=2, zorder=4)
+    ax_hl.text(pooled, len(names) - 0.35, f"  mean {pooled:+.3f}",
+               color=SERIES_2, fontsize=9, va="center")
+    ax_hl.set_yticks(np.arange(len(names)))
+    ax_hl.set_yticklabels(names, color=MUTED, fontsize=9)
+    ax_hl.set_xlim(0, max(vals) * 1.12)
+    # The extremes only. A number on every bar collided with the mean line at
+    # the four assays nearest it, and bar length already carries the comparison
+    # -- the two ends are what a reader needs in figures.
+    for _i in (0, len(vals) - 1):
+        ax_hl.text(vals[_i] + 0.01, _i, f"{vals[_i]:.2f}", va="center",
+                   color=INK, fontsize=9)
+    fig_hl.tight_layout()
+    fig_hl
+    return names, vals
+
+
+@app.cell
+def _(mo, per_assay, pooled):
+    mo.md(
+        f"""
+        **{pooled:+.6f}** across {len(per_assay)} held-out assays — the figure
+        the report quotes as +0.758, from the recipe in
+        `experiments/analysis/reproduce_headline_transfer.py`: final-layer
+        `dz_site`, z-scored within assay, leave-one-assay-out ridge at λ=10.
+
+        The spread matters as much as the mean. The weakest assay is
+        {min(per_assay, key=per_assay.get)} at
+        {min(per_assay.values()):+.3f} and the strongest
+        {max(per_assay, key=per_assay.get)} at {max(per_assay.values()):+.3f};
+        a mean over twelve proteins with that spread is a different claim from
+        a single number on one.
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Going further
+
+        Everything here reads artifacts. To collect new ones you need a GPU node,
+        and the job is rendered before it is queued:
+
+        ```bash
+        # what would run, resolved from the site profile — loads nothing
+        uv run pi render --checkout collect_pairformer_layers.py
+
+        # the capture itself
+        sbatch jax_harness/checkout.sbatch \\
+            ../experiments/collection/collect_pairformer_layers.py \\
+            --n-variants 8 --out $W/runs/mine.npz
+        ```
+
+        Two things worth knowing before comparing anything you collect against
+        an archive:
+
+        - `dz_site` agrees across jobs to about **1%**, not exactly, and some
+          variants are far more sensitive than others — one sampled assay ranged
+          from 0.2% to 5.4% between two runs of identical code. Comparing
+          captures against zero will always fail.
+        - The same field name means different things in different archives:
+          a 128-channel **vector** here, a per-layer **norm** in the cross-model
+          captures. `load_capture` checks the array's rank rather than trusting
+          the name, and `CaptureSpec` states which one a run promised.
+
+        `docs/API.md` is the guide; `pi reproduce` replays any archived result
+        from the command it recorded.
+        """
+    )
+    return
+
+
 if __name__ == "__main__":
     app.run()
