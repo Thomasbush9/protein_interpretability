@@ -42,6 +42,9 @@ esm = [
 dev = [
     "pytest>=9.0.3",
 ]
+notebook = [
+    "marimo>=0.24.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
