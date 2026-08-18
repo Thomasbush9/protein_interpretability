@@ -25,14 +25,21 @@ and `probe_*` analyse, `fig_*` plot, `build_*_report.py` assemble, `launch_*.sh`
 and `*.sbatch` submit. The `pi_*.py` files here are six-line aliases into the
 package, kept so existing call sites work unchanged; import either name.
 
+`configs/cohorts/` holds four checksummed cohort manifests (basis, heldout,
+cross-model, intervention). A cohort is a named list of assays, not whatever a
+glob matched; `Cohort.load(name).verify()` refuses if an input moved.
+
 Do not add a `pi_*` module. New library code goes in the package.
+
+**`docs/API.md` is the guide for writing scripts against this library**, with a
+runnable example at `experiments/analysis/example_transfer_probe.py`. Read it
+before adding an experiment.
 
 ## Build, Test, and Development Commands
 This repository is configured as a Python 3.12 project with `uv`.
 
 - `uv sync`: create or update the local environment from `pyproject.toml` and `uv.lock`.
-- `uv run pytest tests/test_records.py tests/test_boundaries.py -q`: the model-free
-  tests. Name the files; collecting the directory has hung here.
+- `uv run pytest tests/ -q`: the model-free tests. Under a second.
 
 Nothing that loads a model runs on the login node. Jobs go through one of two
 submitters, and the difference matters:
@@ -53,11 +60,16 @@ report producers from those records and diffs them.
 Follow standard Python conventions: 4-space indentation, `snake_case` for functions and modules, `PascalCase` for classes, and concise docstrings for public functions. Add type hints where practical; the existing codebase already uses them. Keep plotting and extraction concerns separated by module. Use descriptive filenames like `plot_attention.py`, not generic names like `helpers2.py`.
 
 ## Testing Guidelines
-`tests/` holds the model-free tests; run them by naming the files, because
-collecting the directory has hung here (a cold `import pytest` off this
-filesystem has taken 40 s, so give a run that looks stuck a few minutes before
-concluding anything). The harness also carries its own self-tests next to the
-code they cover — `pi_basis_test.py`, `pi_archive_test.py` — run directly.
+`tests/` holds the model-free tests: `uv run pytest tests/ -q`, well under a
+second. They used to appear to hang, which was recorded here as a pytest bug in
+this environment. It was not: `torch` was declared as a dependency, the analysis
+venv was 5 GB, and a cold `import pytest` off this filesystem took 40 s. Only
+`pi_core` imports torch, for a checkpoint load that runs inside the container
+which supplies its own, so the declaration was vestigial. Removing it took the
+venv to 569 MB. **Do not add torch back.**
+
+The harness also carries self-tests next to the code they cover —
+`pi_basis_test.py`, `pi_archive_test.py` — run directly.
 
 Write guards that assert the **refusal**, not the happy path. Both existing
 suites are built that way, and it is the reason they are worth having: a schema

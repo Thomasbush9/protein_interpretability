@@ -21,8 +21,13 @@ dependencies = [
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "tmtools>=0.3.0",
-    "torch>=2.11.0",
 ]
+# torch is deliberately NOT here. The only file that imports it is pi_core, for
+# a checkpoint load, and that runs inside the mosaic container which supplies
+# its own. Declaring it made the analysis environment 5 GB -- enough that a cold
+# `import pytest` off this filesystem took 40 s and read as a hung test runner.
+# The plan asks that offline analysis install without model-specific
+# environments; this is most of what that meant in practice.
 
 [project.scripts]
 pi = "protein_interpretability.cli.main:main"

@@ -1,527 +1,130 @@
-# Protein Interpretability
+# Protein interpretability
 
-Tools for extracting and analysing hidden representations from protein structure
-prediction models (Boltz2, ESM3).
+Mechanistic interpretability of protein structure-prediction trunks — Boltz-2,
+OpenFold3 and Protenix — with the analysis kept strictly separable from the
+models.
 
-## Installation
+The central result: **Boltz-2's internal state predicts mutational stability far
+better than anything it emits.** A probe on the trunk reaches a within-assay
+Spearman well above the richest description of the structure the model actually
+produces, and a single shared direction (PC2) transfers across assays, survives
+on a held-out cohort, and steers the model causally when injected.
 
-Requires Python 3.12+.
+---
+
+## Layout
+
+```
+src/protein_interpretability/     the library
+├── analysis/      statistics, basis, chemistry, metrics   — imports NO backend
+├── collection/    cohorts, records                        — backends, lazily
+├── experiments/   protocol
+├── artifacts.py   write_result, load_capture, Capture
+└── cli/           pi reproduce | verify | inspect | cohort
+
+jax_harness/       experiment entry points: exp_* collect, analyze_*/probe_*
+                   analyse, fig_* plot, build_*_report assemble,
+                   launch_*.sh and *.sbatch submit
+configs/cohorts/   four checksummed cohort manifests
+experiments/       readable programs written against the library
+docs/API.md        how to write your own scripts   ← start here
+tests/             model-free
+```
+
+One rule shapes it, and a test enforces it rather than a convention:
+
+> `analysis/` may not import a model backend or load weights. It **may** use
+> jax as a numerics library.
+
+That distinction is narrower than "no jax" deliberately — three report producers
+run their linear algebra on the GPU, and the basis needs a float64 `jnp` SVD
+because float32 once corrupted an archived basis.
+
+---
+
+## Install
+
+Python 3.12, `uv`:
 
 ```bash
-# Core install (scoring, analysis)
 uv sync
-
-# With ESM3 support
-uv sync --extra esm
+uv run pytest tests/test_records.py tests/test_boundaries.py -q
 ```
 
-On a cluster where the Boltz conda env already exists, you can skip the install
-and set `PYTHONPATH` to point at `src/` instead (the orchestrator script does
-this automatically). Boltz2 is intentionally not managed by this project's
-local `uv` environment because its dependency pins conflict with the core
-analysis stack; use the dedicated cluster environment for Boltz runs.
+That is the whole analysis environment — it installs no model. Running a model
+needs the mosaic container, which the submitters below know how to reach.
 
-## Perturbation Generation
+---
 
-Scripts for building mutation study sets from the Sarkisyan avGFP TSV and for
-adding controlled random perturbations on top of existing mutants. Outputs are
-`seq_XXXXX.fasta` files compatible with the Boltz2 / ESM extraction pipelines.
+## Running things
 
-### 1. Sample a study set — `scripts/sample_mutations.sh`
-
-Draws `N` high-effect and `N` neutral rows (single- and multi-mutation) from
-the brightness TSV, writes `selected.tsv` per group, and copies the matching
-`seq_${idx}.fasta` files from `FASTA_DIR`.
+Nothing that loads a model runs on the login node. This account has no CPU
+partition, so analysis jobs go to a GPU partition too and are written to use the
+device.
 
 ```bash
-FASTA_DIR=/path/to/all_fastas \
-OUT_DIR=./study_set \
-bash scripts/sample_mutations.sh \
-    --n 100 --high-max 2.8 --neutral-min 3.7 --max-per-mut 5 --seed 42
+# the git checkout — use this for anything touching src/
+sbatch jax_harness/checkout.sbatch analyze_svd.py --out $W/runs/mine.json
+
+# prot_interp_files/harness/, a COPY that does not carry src/
+sbatch jax_harness/analysis.sbatch analyze_svd.py --out $W/runs/mine.json
 ```
 
-Produces `study_set/{single_mut,multi_mut}/{high_effect,neutral}/` each with
-`selected.tsv` + per-sequence FASTAs, plus `sampling_summary.json`.
+If you changed the library, use `checkout.sbatch`; the mirror will not have your
+change and the job will quietly run the old code.
 
-### 2a. Add random perturbations to a FASTA dir — `scripts/augment_fasta_random.py`
+---
 
-Takes an existing mutant FASTA directory (e.g. `multi_mut/high_effect/` from
-step 1) and adds `proportion * L` extra random substitutions per sequence at
-positions **not** already mutated. Same filenames, new directory.
+## The `pi` command
 
 ```bash
-python scripts/augment_fasta_random.py \
-    --in-dir  ./study_set/multi_mut/high_effect \
-    --tsv     ./study_set/multi_mut/high_effect/selected.tsv \
-    --proportion 0.20 \
-    --out-dir ./study_set/multi_mut/high_effect_p20 \
-    --seed 42
+pi cohort                                   # the four cohorts
+pi cohort basis_assays --list --verify      # and check their inputs on disk
+pi inspect jax_harness/my_script.py         # before you submit
+pi reproduce $W/runs/svd_dz_v3.json --out /tmp/check --checkout --submit
+pi verify $W/runs/svd_dz_v3.json /tmp/check/svd_dz_v3.json
 ```
 
-Run once per perturbation level (e.g. `0.20`, `0.40`, `0.70` for the
-`p20/p40/p70` levels consumed by `analysis_perturbation.ipynb`). Writes an
-`augmented.tsv` whose `extra_mutations` column is compatible with
-`compute_divergence.py`.
+Every result file records the exact `argv` that produced it, so `pi reproduce`
+replays it rather than asking you to reconstruct the command. `pi verify`
+applies the measured non-determinism bands — three producers are not bit-stable,
+and each band records how it was measured.
 
-### 2b. Random perturbations from a single FASTA — `scripts/augment_single_fasta_random.py`
+---
 
-No TSV, no prior mutation annotation — just a single input FASTA (e.g. WT).
-Generates `--n` copies, each with `proportion * L` random substitutions
-drawn uniformly across the full length. Output filenames (`seq_XXXXX.fasta`)
-and sidecar `.txt` files are created from scratch.
+## Two things that will save you an afternoon
 
-```bash
-python scripts/augment_single_fasta_random.py \
-    --in-fasta /path/to/wt.fasta \
-    --n 50 \
-    --proportion 0.20 \
-    --out-dir ./wt_aug_p20 \
-    --seed 42
-```
+**Run the unchanged code twice before calling a difference a regression.** Three
+apparent regressions during the refactor turned out to be run-to-run variation.
+One apparent MSA effect turned out to be the diffusion sampler: coordinates come
+from a stochastic sampler keyed by the same seed, so comparing structures across
+different keys measures the sampler, not what you changed.
 
-Writes `seq_00000.fasta` + `seq_00000.txt` (mutation log) per copy, plus
-`augmented.tsv` compatible with `compute_divergence.py`.
+**Choose the MSA regime explicitly.** `pi_models.load(name, msa=...)` has no
+default. `subsample` draws 1024 alignment rows per key — fast, and not
+bit-reproducible. `full` uses the whole alignment and is what every archived
+Boltz-2 capture was produced with. The two agree on the science; they differ in
+whether a rerun gives you the same number.
 
-### 2c. High-effect + random — `scripts/augment_high_effect.py`
+---
 
-Self-contained variant: picks `--n` high-effect rows directly from the TSV and
-adds `--pct`% random extra mutations. Writes `augmented.tsv` and, if
-`--wt-fasta` is given, per-row `seq_<idx>_aug.fasta`.
+## Writing your own scripts
 
-```bash
-python scripts/augment_high_effect.py \
-    --out-dir ./augmented \
-    --n 100 --high-max 2.8 --pct 5 \
-    --wt-fasta /path/to/avGFP_wt.fasta \
-    --seed 42
-```
+Read **`docs/API.md`**, then copy
+`experiments/analysis/example_transfer_probe.py` — cohort → verify → read
+captures → statistic → archived result, in about 80 lines, runnable on the login
+node.
 
-Use this when you want the perturbation step to also do the high-effect
-sampling (no prior `sample_mutations.sh` run needed).
+Results are written through one seam, which refuses a result with no protocol
+block. That block states what a number is comparable to, and it exists because a
+page once quoted an archive that recorded neither its layer convention nor its
+orientation rule.
 
-## Boltz2 Hidden Representation Extraction
+---
 
-### Prerequisites
+## Data
 
-1. **Boltz2 model cache.** The checkpoint and CCD database are downloaded
-   automatically on first run. Set the cache path in the config or via
-   `--cache`:
-
-   ```
-   ~/.boltz/                    # default local
-   /n/holylfs06/.../boltz_db    # cluster shared cache
-   ```
-
-2. **Input YAMLs.** Each sequence needs a YAML file in Boltz2's input format:
-
-   ```yaml
-   version: 1
-
-   sequences:
-     - protein:
-         id: "P12345"
-         sequence: "MKTLLILAVF..."
-         msa: /absolute/path/to/sequence.a3m
-   ```
-
-   MSA paths **must be absolute** — the orchestrator symlinks YAMLs into
-   staging directories, so relative paths would break MSA resolution.
-
-   These YAMLs are produced by
-   [ProtForge](https://github.com/...)&rsquo;s `organize_msa_outputs.py`.
-
-3. **Directory layout.** The extraction scripts accept either a single YAML or
-   a directory. For batch runs, organise sequences as:
-
-   ```
-   sequences_dir/
-     seq_00132/
-       msa/
-       seq_00132.yaml
-     seq_00318/
-       msa/
-       seq_00318.yaml
-     ...
-   ```
-
-   A flat directory of YAMLs also works (discovery is recursive via
-   `rglob("*.yaml")`).
-
-### Option A: Batch extraction with the orchestrator (recommended)
-
-The orchestrator splits YAMLs across GPUs and launches one extraction
-subprocess per GPU in parallel.
-
-**1. Edit the config:**
-
-```bash
-cp scripts/boltz_extract_config.yaml my_config.yaml
-```
-
-```yaml
-input:
-  sequences_dir: /path/to/sequences
-  subset_file: null              # optional: file with one yaml stem per line
-
-output:
-  out_dir: /path/to/hidden_reps
-
-boltz:
-  cache: /path/to/boltz_db
-  recycling_steps: 3
-  sampling_steps: 200
-  diffusion_samples: 1
-  step_scale: 1.5
-  seed: null
-  no_kernels: false
-
-extraction:
-  sites: [input_embedder, pairformer_s]
-  layers: all
-  layer_sites: [layer_s]
-  recycling_steps_to_save: last  # "last" | "all" | "every:N" | "0,2"
-
-runtime:
-  num_gpus: 4
-  accelerator: gpu
-  num_workers: 2
-  python: python
-  env:
-    CUEQ_DEFAULT_CONFIG: "1"
-    CUEQ_DISABLE_AOT_TUNING: "1"
-```
-
-See [docs/boltz2_extraction_sites.md](docs/boltz2_extraction_sites.md) for
-what each site captures and its tensor shape.
-
-**2. Run:**
-
-```bash
-python scripts/run_boltz_extract.py --config my_config.yaml
-```
-
-The orchestrator will print a summary and launch. Per-GPU logs are written to
-`<out_dir>/_log_chunk_N.out`.
-
-### Option B: Single sequence / directory via CLI
-
-```bash
-python -m protein_interpretability.extract_hidden_reps input.yaml \
-    --out_dir ./output \
-    --cache ~/.boltz \
-    --recycling_steps 3 \
-    --sites input_embedder,pairformer_s \
-    --layers all \
-    --layer_sites layer_s \
-    --recycling_steps_to_save last
-```
-
-Pass a directory instead of a single YAML to process all YAMLs in it.
-
-Full CLI options:
-
-```
-python -m protein_interpretability.extract_hidden_reps --help
-```
-
-### Option C: SLURM job
-
-```bash
-sbatch scripts/run_extract_hidden_reps.slrm /path/to/input /path/to/output
-```
-
-Override defaults via environment variables:
-
-```bash
-sbatch --export=RECYCLING_STEPS=5,SITES=pairformer_s,LAYERS=all,RECYCLING_STEPS_SAVE=every:2 \
-    scripts/run_extract_hidden_reps.slrm /path/to/input /path/to/output
-```
-
-Available overrides: `BOLTZ_CACHE`, `BOLTZ_ENV_PATH`, `RECYCLING_STEPS`,
-`SAMPLING_STEPS`, `DIFFUSION_SAMPLES`, `LAYERS`, `SITES`, `LAYER_SITES`,
-`RECYCLING_STEPS_SAVE`.
-
-### Output structure
-
-```
-out_dir/
-  seq_00132/
-    model_outputs.pt          # Boltz2 predictions (coords, confidence)
-    hidden_reps.pt            # extracted activations
-    metadata.json             # config, shapes, file sizes
-  seq_00318/
-    ...
-  _log_chunk_0.out            # per-GPU logs (orchestrator only)
-  _staging/                   # temporary symlinks (can delete after)
-```
-
-**`model_outputs.pt`** contains:
-
-| Key | Shape | Description |
-|-----|-------|-------------|
-| `sample_atom_coords` | (1, N_atoms, 3) | predicted 3D coordinates |
-| `s` | (1, N, 384) | final sequence representation |
-| `z` | (1, N, N, 128) | final pairwise representation |
-| `plddt` | (1, N) | per-residue confidence |
-| `pae` | (1, N, N) | predicted alignment error |
-| `ptm` | scalar | predicted TM-score |
-| `token_pad_mask` | (1, N) | True = valid token |
-
-**`hidden_reps.pt`** depends on `recycling_steps_to_save`:
-
-With `last` (default) — a flat dict:
-```python
-{
-    "input_embedder":       Tensor(1, N, 384),
-    "pairformer_s":         Tensor(1, N, 384),
-    "pairformer_0_layer_s": Tensor(1, N, 384),
-    "pairformer_1_layer_s": Tensor(1, N, 384),
-    ...
-    "pairformer_47_layer_s": Tensor(1, N, 384),
-}
-```
-
-With `all`, `every:N`, or comma-separated indices — nested by step:
-```python
-{
-    "step_0": {"input_embedder": ..., "pairformer_0_layer_s": ..., ...},
-    "step_1": {...},
-    "step_2": {...},
-}
-```
-
-### Extraction sites reference
-
-| Site | Shape | Description |
-|------|-------|-------------|
-| `input_embedder` | (B, N, 384) | initial per-token embeddings (pre-pairformer) |
-| `pairformer_s` | (B, N, 384) | final per-token representation |
-| `pairformer_z` | (B, N, N, 128) | final pairwise representation |
-| `distogram` | (B, N, N, 64) | distance bin logits |
-| `layer_s` | (B, N, 384) | per-layer sequence output |
-| `layer_z` | (B, N, N, 128) | per-layer pairwise output |
-| `attention` | (B, N, 384) | attention module output |
-| `attention_weights` | (B, 16, N, N) | post-softmax attention (16 heads) |
-| `tri_mul_out` | (B, N, N, 128) | triangle multiplication outgoing |
-| `tri_mul_in` | (B, N, N, 128) | triangle multiplication incoming |
-| `tri_att_start` | (B, N, N, 128) | triangle attention starting node |
-| `tri_att_end` | (B, N, N, 128) | triangle attention ending node |
-| `transition_s` | (B, N, 384) | sequence transition MLP |
-| `transition_z` | (B, N, N, 128) | pairwise transition MLP |
-
-Full architecture descriptions in
-[docs/boltz2_extraction_sites.md](docs/boltz2_extraction_sites.md).
-
-### `recycling_steps_to_save` options
-
-| Value | Saves | Example with 6 recycling steps |
-|-------|-------|-------------------------------|
-| `last` | final step only | step 5 |
-| `all` | every step | 0, 1, 2, 3, 4, 5 |
-| `every:2` | every 2nd + last | 0, 2, 4, 5 |
-| `every:3` | every 3rd + last | 0, 3, 5 |
-| `0,3,-1` | specific indices | 0, 3, 5 |
-
-### Storage estimates
-
-Per sequence of length N, per recycling step saved:
-
-| Config | Size formula | N=150 |
-|--------|-------------|-------|
-| `layer_s` only, 48 layers | 48 x N x 384 x 4B | ~10 MB |
-| + `input_embedder` + `pairformer_s` | +2 x N x 384 x 4B | ~10.5 MB |
-| + `layer_z`, 48 layers | +48 x N x N x 128 x 4B | ~4.7 GB |
-| + `attention_weights`, 48 layers | +48 x 16 x N x N x 4B | ~3.2 GB |
-
-For the distance-to-WT analysis, `layer_s` + `input_embedder` + `pairformer_s`
-is sufficient and storage-friendly (~10 MB per sequence per step).
-
-## Boltz2 Attention Extraction
-
-Standalone script for capturing only attention weight matrices:
-
-```bash
-python -m protein_interpretability.extract_attention input.yaml \
-    --out_dir ./attention_output \
-    --layers all \
-    --average_heads \
-    --save_format pt
-```
-
-Outputs are saved to `<out_dir>/boltz_results_<stem>/attention/`.
-
-## Boltz2 Gradient Attribution
-
-Computes input-gradient attribution on Boltz2's distogram logits — answers
-*"which inputs drove the model's structural prediction at recycle K?"*
-
-The attribution loss sits on the distogram head (deterministic, pre-diffusion),
-so the backward graph is reproducible and contains no stochastic SDE steps.
-For each requested recycling depth K, the runner does one fresh
-`forward(recycling_steps=K)` + one `backward()` and saves gradients on:
-
-| Surface | Hook | Shape | Reads as |
-|---|---|---|---|
-| `query_emb` | `model.input_embedder` (output) | `(B, N, D_s)` | "did the query residue itself contribute?" |
-| `msa_emb` | `model.msa_module` (output, last call) | model-dependent | "is signal flowing from MSA at recycle K?" |
-
-Pair-representation gradients per recycle step are deferred to a v2 — see
-the design log in the project's vault folder.
-
-### Single-record CLI
-
-```bash
-python -m protein_interpretability.attribution.cli input.yaml \
-    --out_dir ./attribution_output \
-    --target contact:128,142 \
-    --recycling_steps 0,5,10 \
-    --no_kernels
-```
-
-Targets:
-
-| Spec | Maps to | Loss |
-|---|---|---|
-| `contact:i,j` | `ContactBinNLL(i, j)` | -log p(d_ij ∈ contact bins) |
-| `pair_bin:i,j,b` | `PairLogProb(i, j, b)` | -log p(d_ij = bin b) |
-
-Outputs land at `<out_dir>/<record_id>_attribution_R<K>.pt` — one file per
-recycling depth. Schema is versioned (`attribution_v1`); each file carries
-gradients, the input activations they were taken at, the target spec, the
-token mask, and a provenance dict (git SHA, timestamp, torch version, config).
-
-`--no_kernels` is recommended for grad runs (fused kernels can swallow
-intermediates `retain_grad()` needs).
-
-### Python API
-
-```python
-import torch
-from protein_interpretability.attribution import (
-    ContactBinNLL, run_per_step, save_result, load_result,
-)
-
-target = ContactBinNLL(pair_i=128, pair_j=142)
-results = run_per_step(
-    model=model,                  # eval-mode Boltz2
-    batch=batch,                  # already on device
-    target=target,
-    recycling_steps=(0, 5, 10),
-)
-for r in results:
-    print(f"R={r.recycling_steps} loss={r.target_value:.4f}")
-    save_result(r, f"./out/{r.record_id}_R{r.recycling_steps}.pt")
-
-# Reload + analyse
-r = load_result("./out/seq_00000_R10.pt")
-ixg_query = r.input_x_grad("query")     # (B, N, D_s)
-ixg_msa = r.input_x_grad("msa")         # (B, S, N, D_msa)
-```
-
-For the lower-level capture context (no per-step orchestration):
-
-```python
-from protein_interpretability.attribution import GradientCapture
-
-cap = GradientCapture(model)
-with cap, torch.set_grad_enabled(True):
-    cap.clear()
-    _ = model(batch, recycling_steps=10)
-    loss = target(cap.distogram, token_mask=batch["token_pad_mask"])
-    loss.backward()
-    query_grad = cap.query_emb.grad
-    msa_grad = cap.msa_emb.grad
-```
-
-### Memory + reproducibility notes
-
-- Default mode does **K separate forward passes** (one per requested
-  recycling depth). Memory is bounded to a single forward; total wall-time
-  scales linearly in `len(recycling_steps)`.
-- The model must be in `eval()`. The runner enables grad explicitly inside
-  the capture context; nothing else needs changing.
-- Padded positions are zeroed on the saved gradient/activation tensors so
-  downstream analysis can ignore the mask.
-
-## Scoring
-
-Structure comparison utilities for evaluating mutations:
-
-```python
-from protein_interpretability.scoring import path_tm_score, path_rmsd
-
-tm = path_tm_score("wildtype.cif", "mutant.cif")
-rmsd = path_rmsd("wildtype.cif", "mutant.cif")
-```
-
-Supports both PDB and mmCIF formats. For multi-chain structures, pass
-`chain_id` explicitly.
-
-### Batch scoring a directory of predictions
-
-Use `score_sequences` to score every `.cif` or `.pdb` under a results directory
-against a single reference and write the results to CSV:
-
-```bash
-uv run python -m protein_interpretability.score_sequences \
-    --ref /path/to/reference.cif \
-    --predicted-dir /path/to/results \
-    --model-subdir boltz \
-    --output-dir /path/to/output \
-    --output-name structure_scores.csv \
-    --normalize-by reference
-    # --chain-id A        # optional, for multi-chain structures
-```
-
-The script searches `--predicted-dir` recursively for `.cif` and `.pdb`, so
-Boltz2 output layouts like `results/seq_00132/predictions/seq_00132_model_0.cif`
-are picked up automatically. If you pass `--model-subdir`, only files under that
-subdirectory are scored, which is useful for layouts like
-`seq_00132/boltz/*.cif` or `seq_00132/esmfold/*.pdb`. The sequence index can be
-parsed from either the filename or a parent directory like `seq_00132`.
-
-Examples:
-
-```bash
-# Score only Boltz predictions laid out like seq_00132/boltz/*.cif
-uv run python -m protein_interpretability.score_sequences \
-    --ref /path/to/reference.cif \
-    --predicted-dir /path/to/sequences \
-    --model-subdir boltz \
-    --output-dir /path/to/output \
-    --output-name boltz_structure_scores.csv \
-    --normalize-by reference
-```
-
-```bash
-# Score only ESMFold predictions laid out like seq_00132/esmfold/structure.pdb
-uv run python -m protein_interpretability.score_sequences \
-    --ref /path/to/reference.cif \
-    --predicted-dir /path/to/sequences \
-    --model-subdir esmfold \
-    --output-dir /path/to/output \
-    --output-name esmfold_structure_scores.csv \
-    --normalize-by reference
-```
-
-Use `--chain-id A` when scoring multichain structures. The CLI must be invoked
-with `-m protein_interpretability.score_sequences`; `python
-protein_interpretability.score_sequences` is not valid module syntax.
-
-`--normalize-by` controls which structure length normalizes the TM-score
-(`reference` or `predicted`); RMSD is length-independent.
-
-The output CSV has columns:
-
-| Column | Description |
-|--------|-------------|
-| `sequence_idx` | integer parsed from `seq_<N>` in the filename |
-| `predicted_path` | absolute path to the scored `.cif` or `.pdb` |
-| `tm_score` | TM-score vs. reference |
-| `rmsd` | C-alpha RMSD vs. reference |
-
-## Tests
-
-```bash
-uv run pytest tests/
-```
+Datasets, captures, weights and reports live outside this repository under
+`prot_interp_files/` — captures in `runs/`, assay tables and alignments in
+`data/gym/`, the master report in `report_master/`. Nothing large belongs in
+git.

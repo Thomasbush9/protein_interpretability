@@ -1696,7 +1696,6 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "tmtools" },
-    { name = "torch" },
 ]
 
 [package.optional-dependencies]
@@ -1726,7 +1725,6 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.17.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "tmtools", specifier = ">=0.3.0" },
-    { name = "torch", specifier = ">=2.11.0" },
 ]
 provides-extras = ["esm"]
 
