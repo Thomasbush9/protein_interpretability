@@ -110,10 +110,23 @@ whether a rerun gives you the same number.
 
 ## Writing your own scripts
 
-Read **`docs/API.md`**, then copy
-`experiments/analysis/example_transfer_probe.py` — cohort → verify → read
-captures → statistic → archived result, in about 80 lines, runnable on the login
-node.
+Read **`docs/API.md`**, then start from one of these — both run on the login
+node in seconds:
+
+```bash
+# reproduces the report's headline (+0.758) exactly, in ~130 lines
+uv run python experiments/analysis/reproduce_headline_transfer.py
+
+# the same shape at minimum size — copy this one
+uv run python experiments/analysis/example_transfer_probe.py --out /tmp/mine.json
+```
+
+The headline recipe is short enough to read in one sitting: final-layer
+`dz_site` (the 128 pair channels at the mutated position — the *direction* the
+row moved), z-scored within assay, leave-one-assay-out ridge at λ=10, Spearman
+on the held-out assay, meaned over the twelve. `tests/test_headline.py` checks
+it against the archive per assay, so the opening claim of the report is guarded
+by a test rather than by memory.
 
 Results are written through one seam, which refuses a result with no protocol
 block. That block states what a number is comparable to, and it exists because a

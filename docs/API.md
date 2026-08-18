@@ -1,8 +1,13 @@
 # Writing your own scripts
 
-A worked, runnable version of everything below is in
-`experiments/analysis/example_transfer_probe.py` — cohort → verify → read
-captures → statistic → archived result, in about 80 lines. Copy it.
+Two runnable scripts to start from:
+
+- **`experiments/analysis/reproduce_headline_transfer.py`** — reproduces the
+  report's headline (+0.758) exactly, in ~130 lines. If you want to see what a
+  real result is actually made of, read this one.
+- **`experiments/analysis/example_transfer_probe.py`** — the same shape at
+  minimum size: cohort → verify → captures → statistic → archived result.
+  Copy this one.
 
 
 Everything here runs from a checkout. The library lives in
