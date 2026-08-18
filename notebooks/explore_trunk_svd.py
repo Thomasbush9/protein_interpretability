@@ -162,5 +162,116 @@ def _(RUNS, mo):
     return
 
 
+@app.cell
+def _():
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    # This matplotlib wheel ships no bundled fonts -- its `fonts/ttf` directory
+    # is absent -- so the default DejaVu Sans raises rather than falling back,
+    # and every figure fails. Name the families this machine actually has, in
+    # order, and re-enable the fallback that the failure said was disabled.
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = [
+        "Nimbus Sans", "Droid Sans", "Cantarell", "sans-serif",
+    ]
+    matplotlib.rcParams["axes.unicode_minus"] = False
+
+    # One palette for every chart here, so they read as one system. These are
+    # the reference palette's first three categorical slots, used unchanged --
+    # documented as clearing the all-pairs colour-vision gates in both modes.
+    INK = "#0b0b0b"
+    MUTED = "#52514e"
+    SERIES_1 = "#2a78d6"      # blue
+    SERIES_2 = "#eb6834"      # orange
+    GRID = "#e4e3df"
+
+    def axes(width=7.2, height=3.4, xlabel="", ylabel="", title=""):
+        """A chart with recessive furniture: the data should be the only thing
+        with weight on the page."""
+        fig, ax = plt.subplots(figsize=(width, height))
+        ax.set_title(title, color=INK, fontsize=11, loc="left", pad=12)
+        ax.set_xlabel(xlabel, color=MUTED, fontsize=9)
+        ax.set_ylabel(ylabel, color=MUTED, fontsize=9)
+        ax.grid(True, color=GRID, linewidth=0.8, zorder=0)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+        ax.tick_params(colors=MUTED, labelsize=9, length=0)
+        return fig, ax
+
+    return INK, MUTED, SERIES_1, SERIES_2, axes, plt
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Where in the trunk does the signal live?
+
+        At each Pairformer layer, how well does the size of the representation's
+        movement track the measured stability effect? One number per layer.
+        """
+    )
+    return
+
+
+@app.cell
+def _(INK, MUTED, SERIES_1, axes, dz, n_layers, np, score, st):
+    trace = np.array([
+        st.spearman(np.linalg.norm(dz[:, i, :], axis=-1), score)
+        for i in range(n_layers)
+    ])
+    peak = int(np.nanargmax(np.abs(trace)))
+
+    fig_trace, ax_trace = axes(
+        xlabel="Pairformer layer",
+        ylabel="Spearman  |dz| vs stability",
+        title="The signal strengthens through the last quarter of the trunk",
+    )
+    ax_trace.axhline(0, color=MUTED, linewidth=1, zorder=1)
+    ax_trace.plot(np.arange(n_layers), trace, color=SERIES_1, linewidth=2,
+                  zorder=3)
+    # Direct-label the peak only; a number on every point is noise. Flip the
+    # label inward when the peak sits near an edge -- for this trace it lands on
+    # the final layer, where a right-hand label runs outside the axes.
+    ax_trace.plot([peak], [trace[peak]], "o", color=SERIES_1, markersize=9,
+                  markeredgecolor="white", markeredgewidth=1.5, zorder=4)
+    near_right = peak > 0.75 * n_layers
+    ax_trace.annotate(
+        f"strongest  layer {peak}   {trace[peak]:+.2f}",
+        xy=(peak, trace[peak]),
+        xytext=(-10 if near_right else 10, 12), textcoords="offset points",
+        ha="right" if near_right else "left",
+        color=INK, fontsize=9,
+    )
+    fig_trace.tight_layout()
+    fig_trace
+    return peak, trace
+
+
+@app.cell
+def _(assay_pick, mo, n_layers, peak, trace):
+    mo.md(
+        f"""
+        For **{assay_pick.value}** the correlation is strongest at layer
+        **{peak}** of {n_layers}, at {trace[peak]:+.3f}. It sits near
+        {trace[:len(trace) // 2].mean():+.2f} through the first half and
+        strengthens late — which is why the report reads the pair row at the
+        **final** layer rather than averaging the trunk.
+
+        The sign is negative because a larger movement means a more destabilising
+        mutation, and the assay scores destabilisation as negative.
+
+        Note this is a **magnitude** — it asks *where* the signal is, not *which
+        direction* carries it. The direction is the next section, and it is where
+        the result actually comes from.
+        """
+    )
+    return
+
+
 if __name__ == "__main__":
     app.run()
