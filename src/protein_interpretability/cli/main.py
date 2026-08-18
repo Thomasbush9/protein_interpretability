@@ -207,6 +207,44 @@ def cmd_cohort(a) -> int:
     return 0
 
 
+# ---- site / render ---------------------------------------------------------
+
+def cmd_site(a) -> int:
+    from protein_interpretability.experiments.site import Site, SiteError
+
+    site = Site.load(a.profile)
+    print(site.describe())
+    if a.verify:
+        try:
+            site.verify()
+        except SiteError as exc:
+            print(f"\n{exc}")
+            return 1
+        print("\nverified: the account, partition and roots resolve and exist")
+    return 0
+
+
+def cmd_render(a) -> int:
+    from protein_interpretability.experiments.site import Site, SiteError
+    from protein_interpretability.experiments.slurm import (
+        JobSpec, equivalent_to, render)
+
+    site = Site.load(a.profile)
+    spec = JobSpec(script=a.script, args=tuple(a.args), name=a.name or "pi",
+                   source="checkout" if a.checkout else "mirror",
+                   mem_mb=a.mem, time_min=a.time)
+    text = render(spec, site)
+    print(text, end="")
+
+    if a.check_against:
+        diffs = equivalent_to(text, a.check_against)
+        print(f"\n# vs {a.check_against}: "
+              + ("agrees on every site-owned field" if not diffs
+                 else "DIFFERS\n#   " + "\n#   ".join(diffs)))
+        return 1 if diffs else 0
+    return 0
+
+
 # ---- models ----------------------------------------------------------------
 
 def cmd_models(a) -> int:
@@ -252,6 +290,29 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--fast", action="store_true",
                    help="with --verify, check existence only and skip hashing")
     c.set_defaults(func=cmd_cohort)
+
+    s = sub.add_parser("site", help="the resolved site profile")
+    s.add_argument("--profile", help="an extra profile, applied last")
+    s.add_argument("--verify", action="store_true",
+                   help="check the account, partition and roots exist")
+    s.set_defaults(func=cmd_site)
+
+    d = sub.add_parser("render", help="the SLURM script a job would submit")
+    d.add_argument("script")
+    # REMAINDER so the job's own flags pass through verbatim: the whole point is
+    # to render the command you would actually run, and `--out` is the flag
+    # nearly every script here takes.
+    d.add_argument("args", nargs=argparse.REMAINDER)
+    d.add_argument("--name")
+    d.add_argument("--mem", type=int, help="MB; defaults to the site profile")
+    d.add_argument("--time", type=int, help="minutes")
+    d.add_argument("--checkout", action="store_true",
+                   help="run the git checkout rather than the deployed mirror")
+    d.add_argument("--profile")
+    d.add_argument("--check-against", metavar="SBATCH",
+                   help="compare against a hand-written submitter and exit "
+                        "non-zero if the site-owned fields disagree")
+    d.set_defaults(func=cmd_render)
 
     m = sub.add_parser("models", help="what each model is and can be asked for")
     m.add_argument("name", nargs="?", help="omit to describe every model")

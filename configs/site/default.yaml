@@ -1,0 +1,67 @@
+# Site profile: everything about WHERE this runs, in one place.
+#
+# The submitters under jax_harness/ each carry their own copy of these values,
+# which is why there are three nearly-identical sbatch files whose only real
+# differences are memory, time and which directory they exec from. This is that
+# shared part, extracted so a job can be rendered rather than hand-edited.
+#
+# THIS FILE IS COMMITTED, so it holds logical names and ${VARIABLES} rather than
+# one person's absolute paths. Anything cluster- or user-specific belongs in
+# `local.yaml` beside it, which is gitignored and overrides key-by-key. The
+# defaults below are the ones this project has actually been running with, so a
+# checkout with no local.yaml still resolves to something real -- an example
+# that does not work teaches nothing.
+#
+# Resolution order, lowest first:
+#   1. this file
+#   2. configs/site/local.yaml           (gitignored)
+#   3. $PROT_INTERP_SITE                 (a path to another profile)
+#   4. environment variables named below
+
+site: kempner
+
+roots:
+  # ${VAR} expands from the environment; ${VAR:-default} falls back.
+  work: ${PROT_INTERP_WORK:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files}
+  repo: ${PROT_INTERP_REPO:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability}
+  setup: ${MOSAIC_SETUP:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/mosaic_setup}
+  # Job-local scratch. $TMPDIR is per-job on this cluster; the fallback is only
+  # for a login-node dry run, where nothing is written anyway.
+  scratch: ${TMPDIR:-/tmp}
+  logs: ${PROT_INTERP_WORK:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files}/logs
+
+scheduler:
+  kind: slurm
+  account: ${SLURM_ACCOUNT:-kempner_bsabatini_lab}
+  # There is no CPU partition on this account, so analysis jobs take a GPU node
+  # too and are written to actually use the device.
+  partition: ${SLURM_PARTITION:-kempner_h100}
+  gpus_per_node: 1
+  cpus_per_task: 8
+  # Defaults, overridable per job. 180 GB because the archives are ~114 MB each
+  # and twelve are held open at once, twice over when a repeat run is compared.
+  mem_mb: 180000
+  time_min: 60
+
+container:
+  # mosaic-exec.sh takes the interpreter and the script; the image and weights
+  # are passed to it through the environment.
+  exec: ${roots.setup}/mosaic/singularity/mosaic-exec.sh
+  image: ${roots.setup}/images/mosaic.sif
+  weights: ${roots.setup}/weights
+  scratch: ${MOSAIC_SCRATCH:-/n/netscratch/bsabatini_lab/Everyone/${USER}/mosaic}
+
+env:
+  # Passed through singularity into the container.
+  SINGULARITYENV_XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+  SINGULARITYENV_JAX_PLATFORMS: cuda
+
+caches:
+  # A login-node home cache is the wrong place for these: it is small, shared,
+  # and not job-local.
+  uv: ${TMPDIR:-/tmp}/uv-cache
+
+msa:
+  # colabfold_search runs from a different image than the models.
+  image: ${PROT_INTERP_MSA_SIF:-/n/holylfs06/LABS/bsabatini_lab/Everyone/protforge-assets/sifs/msa.sif}
+  database: ${PROT_INTERP_MSA_DB:-/n/holylfs06/LABS/kempner_shared/Everyone/workflow/boltz/mmseq2_db}

@@ -11,3 +11,6 @@ wheels/
 .DS_Store
 .egg-info
 
+
+# Site profile: cluster- and user-specific paths, overriding configs/site/default.yaml
+configs/site/local.yaml

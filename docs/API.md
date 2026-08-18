@@ -243,6 +243,38 @@ out["distogram"], out["trunk_state"]
 processed inputs live inside it, so keep it alive for as long as you use
 `feats` — letting it go out of scope deletes the features out from under you.
 
+## Where this runs, and rendering a job before you queue it
+
+```bash
+pi site --verify                      # the resolved profile, and does it exist
+pi render --checkout analyze_svd.py --out $W/runs/mine.json
+pi render --checkout --check-against jax_harness/checkout.sbatch analyze_svd.py
+```
+
+`configs/site/default.yaml` is committed and holds logical names and
+`${VARIABLES}`; `configs/site/local.yaml` beside it is gitignored and overrides
+key by key, so moving to another cluster or user does not touch tracked files.
+Resolution is default → local → `$PROT_INTERP_SITE` → environment.
+
+```python
+from protein_interpretability.experiments.site import Site
+from protein_interpretability.experiments.slurm import JobSpec, render
+
+site = Site.load()
+site.verify()                                   # account, partition, roots exist
+print(render(JobSpec(script="analyze_svd.py", source="checkout",
+                     mem_mb=180000, time_min=60), site))
+```
+
+`--check-against` compares a rendered script to a hand-written submitter on the
+fields the *site* owns — account, partition, GPUs, CPUs — and exits non-zero if
+they disagree. Memory, time and job name are per-job and excluded. The renderer
+currently agrees with all three of `analysis.sbatch`, `run.sbatch` and
+`checkout.sbatch`, which is the only evidence it describes a job anyone runs;
+a test asserts it.
+
+Nothing here imports a backend, so a job resolves and renders on a login node.
+
 ## What a model is, before you load one
 
 ```python
