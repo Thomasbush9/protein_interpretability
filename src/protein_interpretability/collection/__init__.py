@@ -5,10 +5,14 @@ imported inside the adapter factories, so `inspect` and `render` can resolve a
 capture spec, estimate memory and render a job without initialising CUDA.
 """
 
+from protein_interpretability.collection.capture_spec import (
+    CaptureSpec,
+    CaptureSpecError,
+)
 from protein_interpretability.collection.cohorts import (
     Assay,
     Cohort,
     CohortError,
 )
 
-__all__ = ["Assay", "Cohort", "CohortError"]
+__all__ = ["Assay", "CaptureSpec", "CaptureSpecError", "Cohort", "CohortError"]

@@ -132,10 +132,62 @@ class Cohort:
         self.source = source
 
     # ---- construction -----------------------------------------------------
+    @staticmethod
+    def _check_document(doc: dict, where: str) -> None:
+        """Refuse a manifest that does not describe a usable cohort.
+
+        The parser is lenient by design — it accepts the small fixed shape the
+        generator writes — so this is where a hand-edited or truncated manifest
+        has to be caught. The dangerous case is not a malformed file, which
+        fails loudly on its own, but an EMPTY one: a cohort with no assays
+        loads, iterates zero times, and `verify()` passes because there is
+        nothing to check. That is a guard reporting success for having done
+        nothing, which is the failure mode this project tests against
+        everywhere else.
+        """
+        problems = []
+        assays = doc.get("assays") or []
+        if not assays:
+            problems.append(
+                "no assays. An empty cohort verifies clean and analyses to "
+                "nothing, so it is refused rather than loaded")
+
+        ids = [e.get("id") for e in assays]
+        if any(not i for i in ids):
+            problems.append(f"{sum(1 for i in ids if not i)} assay(s) with no id")
+        dupes = sorted({i for i in ids if i and ids.count(i) > 1})
+        if dupes:
+            problems.append(
+                f"duplicate ids {dupes}; an assay counted twice weights it "
+                "twice in every pooled statistic")
+
+        declared = doc.get("n_assays")
+        if isinstance(declared, int) and declared != len(assays):
+            problems.append(
+                f"header says n_assays: {declared} but the list holds "
+                f"{len(assays)}. The manifest disagrees with itself, which "
+                "means it was edited by hand rather than regenerated")
+
+        no_inputs = [e.get("id") for e in assays
+                     if not (e.get("assay_csv") or e.get("msa"))]
+        if no_inputs:
+            problems.append(
+                f"{len(no_inputs)} assay(s) name no inputs at all ({no_inputs[:3]}"
+                f"{'...' if len(no_inputs) > 3 else ''}); nothing about them can "
+                "be verified")
+
+        if problems:
+            raise CohortError(
+                f"{where} is not a usable cohort manifest:\n  "
+                + "\n  ".join(problems)
+                + "\n\nRegenerate it with jax_harness/build_cohort_manifests.py "
+                  "rather than editing it.")
+
     @classmethod
     def from_manifest(cls, path) -> "Cohort":
         path = Path(path)
         doc = _parse(path.read_text())
+        cls._check_document(doc, str(path))
         assays = [
             Assay(
                 id=e.get("id"),
@@ -173,8 +225,16 @@ class Cohort:
         a login-node sanity check; the default is the one that catches an
         alignment regenerated in place.
         """
+        if not self.assays:
+            raise CohortError(
+                f"cohort {self.name!r} holds no assays, so verify() would pass "
+                "for having checked nothing")
         problems = []
         for assay in self.assays:
+            if not assay.inputs():
+                problems.append(
+                    f"{assay.id}: no checksummed inputs, so nothing about it "
+                    "can be verified")
             for role, path_s, expected in assay.inputs():
                 p = Path(path_s)
                 if not p.exists():

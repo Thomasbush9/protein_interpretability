@@ -243,6 +243,32 @@ out["distogram"], out["trunk_state"]
 processed inputs live inside it, so keep it alive for as long as you use
 `feats` — letting it go out of scope deletes the features out from under you.
 
+## Declaring a capture before you run it
+
+```python
+from protein_interpretability.collection import CaptureSpec
+
+spec = CaptureSpec(model="boltz2", fields=("dz_site", "kl_site"),
+                   layers="all", reduction="vector", recycles=3)
+spec.validate()                                        # login-node safe
+spec.expected_shapes(n_variants=250, n_tokens=69)      # {"dz_site": (250,64,128), …}
+spec.estimate_bytes(n_variants=250, n_tokens=69)       # ~128 MB
+spec.full_pair_tensor_bytes(n_variants=250, n_tokens=69)   # >4000x larger
+spec.protocol()                                        # merge into your block
+```
+
+**`reduction` is the field that matters.** `dz_site` is a 128-channel *vector*
+in the `gym2s_*` captures and a per-layer *norm* in the `xm_*` ones — same name,
+two shapes, both live in `runs/` today. A norm is a perfectly legal array for a
+different quantity, which is how `deep2_*` handed one to a probe expecting a
+direction and returned +0.468 instead of raising. `spec.validate_capture(cap,
+…)` compares shapes rather than names and says which of the two it got.
+
+`validate()` also refuses a layer index outside the model's depth — the trunks
+are 64 (Boltz-2), 48 (OpenFold3) and 16 (Protenix) blocks deep, so an index
+valid for one is not valid for another. AlphaFold2 has no recorded depth here,
+and asking for one raises rather than guessing.
+
 Validate anything a model returns against the shared schema:
 
 ```python

@@ -116,6 +116,69 @@ def test_unknown_cohort_lists_what_exists():
         Cohort.load("no_such_cohort")
 
 
+# ---- the manifest document itself ------------------------------------------
+
+HEADER = "cohort: tiny\ndescription: d\nderived_from: x\nn_assays: {n}\nassays:\n"
+
+
+def entry(name, csv_path, sha):
+    return (f"  - id: {name}\n"
+            f"    assay_csv:\n"
+            f"      path: {csv_path}\n"
+            f"      sha256: {sha}\n")
+
+
+def write(tmp_path, text) -> "object":
+    p = tmp_path / "m.yaml"
+    p.write_text(text)
+    return p
+
+
+def test_refuses_a_manifest_with_no_assays(tmp_path):
+    """The dangerous one: an empty cohort loads, iterates zero times, and
+    verify() passes for having checked nothing."""
+    with pytest.raises(CohortError, match="no assays"):
+        Cohort.from_manifest(write(tmp_path, HEADER.format(n=0)))
+
+
+def test_refuses_duplicate_ids(tmp_path):
+    csv_p = tmp_path / "a.csv"; csv_p.write_text("x\n")
+    s = sha(csv_p)
+    doc = HEADER.format(n=2) + entry("SAME", csv_p, s) + entry("SAME", csv_p, s)
+    with pytest.raises(CohortError, match="duplicate ids"):
+        Cohort.from_manifest(write(tmp_path, doc))
+
+
+def test_refuses_a_header_that_disagrees_with_the_list(tmp_path):
+    """A manifest that contradicts itself was hand-edited, not regenerated."""
+    csv_p = tmp_path / "a.csv"; csv_p.write_text("x\n")
+    doc = HEADER.format(n=12) + entry("ONE", csv_p, sha(csv_p))
+    with pytest.raises(CohortError, match="disagrees with itself"):
+        Cohort.from_manifest(write(tmp_path, doc))
+
+
+def test_refuses_an_assay_naming_no_inputs(tmp_path):
+    doc = HEADER.format(n=1) + "  - id: NOTHING\n    wt_length: 7\n"
+    with pytest.raises(CohortError, match="name no inputs"):
+        Cohort.from_manifest(write(tmp_path, doc))
+
+
+def test_refuses_an_assay_with_no_id(tmp_path):
+    csv_p = tmp_path / "a.csv"; csv_p.write_text("x\n")
+    doc = (HEADER.format(n=1)
+           + f"  - assay_csv:\n      path: {csv_p}\n      sha256: {sha(csv_p)}\n")
+    with pytest.raises(CohortError, match="no id"):
+        Cohort.from_manifest(write(tmp_path, doc))
+
+
+def test_an_empty_cohort_cannot_be_verified_even_if_constructed(tmp_path):
+    """Belt and braces: the loader refuses one, and verify() refuses it too, so
+    a cohort built another way cannot report a vacuous pass."""
+    from protein_interpretability.collection import Cohort as C
+    with pytest.raises(CohortError, match="holds no assays"):
+        C("empty", "", []).verify()
+
+
 # ---- the real manifests ----------------------------------------------------
 
 def test_the_shipped_cohorts_load_and_are_complete():
