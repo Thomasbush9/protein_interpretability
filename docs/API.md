@@ -345,6 +345,44 @@ a well-formed number that means nothing.
 
 ---
 
+## Interventions
+
+```python
+from protein_interpretability.intervention import (
+    PairDirectionIntervention, random_directions, unit)
+
+iv = PairDirectionIntervention(direction=unit(pc2), scale=median_dz_norm,
+                               mode="sym", alphas=(-30, -10, -3, 0, 3, 10, 30))
+z_perturbed = iv.apply(z, token=41, alpha=10)      # z is [N, N, C]
+controls = random_directions(8, width=128, seed=0)
+```
+
+The algebra is numpy only, so the decisions in it are testable without a GPU —
+which is the point, since they are the ones that change the result:
+
+- **`scale`** is the median `||dz_site||` of real mutations in the assay, so
+  `alpha=1` moves the row as much as a typical mutation does. That is not "as
+  large as a real mutation" overall, which is why the archived sweep runs to 30×.
+- **`mode`** — `row` is one row, `sym` adds the transposed column, `glob` adds to
+  every pair. `glob` exists so a null is interpretable: without it, "the
+  coordinates did not move" cannot distinguish an ignored channel from a
+  perturbation too local to matter.
+- **Under `sym` the diagonal is added twice**, once from the row pass and once
+  from the column pass. It looks like an off-by-one, it is what produced
+  `steer_pooled`, and a test pins it against a transcription of `exp_steer`'s
+  own index expressions.
+- **`alphas` must include 0**, which with a fixed key reproduces the baseline
+  exactly. It is the determinism check that separates an effect from sampler
+  drift.
+
+## Which models are supported
+
+`docs/MODEL_AUDIT.md` records what is supported and what is excluded with
+reasons. Short version: Boltz-2, OpenFold3 and Protenix, all three with their
+trunk depth verified against a loaded model. AlphaFold2 builds but is
+single-sequence only in this wrapper, so it is not comparable with the others at
+full MSA depth; ESMFold has no implementation here at all.
+
 ## Before you submit
 
 ```bash
