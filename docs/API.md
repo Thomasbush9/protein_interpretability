@@ -243,6 +243,36 @@ out["distogram"], out["trunk_state"]
 processed inputs live inside it, so keep it alive for as long as you use
 `feats` — letting it go out of scope deletes the features out from under you.
 
+## What a model is, before you load one
+
+```python
+from protein_interpretability.collection import capabilities as caps
+
+caps.available()                      # ['af2', 'boltz2', 'of3', 'protenix']
+c = caps.capabilities("of3")
+c.n_trunk_blocks                      # 48
+c.plddt_granularity                   # 'atom' — per-token in the other two
+c.require("distogram_centres")        # raises: not recorded for this model
+caps.check_msa("af2", use_msa=True)   # raises: single-sequence only here
+```
+
+`pi models` prints the same table from a shell. It imports no backend, so a
+capture can be planned and rejected on the login node rather than forty minutes
+into a job.
+
+**Anything unmeasured is `None` and raises when asked**, rather than carrying a
+plausible default — AlphaFold2's trunk depth is the live example. Each entry
+records the evidence its numbers came from, and `verify_against_model(name,
+model)` compares the table to a real loaded model from a GPU job so drift is
+detectable. It returns `{"checked": …, "unverified": […]}`: only Boltz-2's
+wrapper currently exposes enough to check, and reporting the other two as
+agreeing on the strength of having read nothing would be a vacuous pass.
+
+Model-specific semantics are recorded rather than smoothed over — pLDDT is
+per-atom in OpenFold3 and per-token elsewhere, and only Boltz-2's distogram grid
+is known here, so cross-model comparisons still have to go through
+`records.assert_comparable`.
+
 ## Declaring a capture before you run it
 
 ```python

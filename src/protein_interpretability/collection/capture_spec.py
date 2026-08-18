@@ -29,18 +29,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dc_field
 
-# Trunk depth per model. boltz2/of3/protenix are read off the cross-model
-# captures and agree with depth_v1's `n_layers_per_model`.
-MODEL_LAYERS: dict[str, int | None] = {
-    "boltz2": 64,
-    "of3": 48,
-    "protenix": 16,
-    "af2": None,        # no capture in this project records it; do not guess
-}
+from protein_interpretability.collection.capabilities import (
+    PAIR_WIDTH,
+    SINGLE_WIDTH,
+    CapabilityError,
+    available as _available,
+    capabilities,
+)
 
-# Representation widths, identical across the three trunks in every capture.
-PAIR_WIDTH = 128
-SINGLE_WIDTH = 384
+# Trunk depth per model comes from the capability registry rather than a second
+# table here. Two tables describing the same models is how one of them ends up
+# quietly wrong; there is exactly one, and it records where its numbers came
+# from.
+MODEL_LAYERS: dict[str, int | None] = {
+    name: capabilities(name).n_trunk_blocks for name in _available()
+}
 
 REDUCTIONS = ("vector", "norm")
 
@@ -48,6 +51,13 @@ REDUCTIONS = ("vector", "norm")
 #   V variants · L captured layers · C channel width · P sampled pairs
 #   B distogram bins · T tokens
 FIELDS: dict[str, tuple[tuple, str]] = {
+    # The unambiguous spelling. The cross-model captures write BOTH -- `dz_vec`
+    # for the direction and `dz_site` for its norm -- which is why those archives
+    # can be read without guessing and the gym2s ones cannot. A `_vec` field is
+    # a vector by name, so it is never reducible: a norm stored under `dz_vec`
+    # is a contradiction, not a configuration.
+    "dz_vec":    (("V", "L", "C_pair"), "pair row at the mutated position"),
+    "ds_vec":    (("V", "L", "C_single"), "single row at the mutated position"),
     "dz_site":   (("V", "L", "C_pair"), "pair row at the mutated position"),
     "ds_site":   (("V", "L", "C_single"), "single row at the mutated position"),
     "kl_site":   (("V", "L"), "KL at the mutated position"),
@@ -151,10 +161,28 @@ class CaptureSpec:
         if self.recycles < 0:
             raise CaptureSpecError("recycles must be >= 0")
 
+        # The `_vec` case first: it is the more specific diagnosis, and both
+        # rules fire on the same spec.
+        vec_named = [f for f in self.fields if f.endswith("_vec")]
+        if self.reduction == "norm" and vec_named:
+            raise CaptureSpecError(
+                f"reduction='norm' with {vec_named}: a field named `_vec` is a "
+                f"vector by name. Storing a norm under it recreates exactly the "
+                f"ambiguity those names exist to remove -- use the `_site` "
+                f"spelling for a norm, or keep the vector.")
+
         if self.reduction == "norm" and not (set(self.fields) & set(REDUCIBLE)):
             raise CaptureSpecError(
                 f"reduction='norm' applies to {sorted(REDUCIBLE)}, and none is "
                 f"captured; the setting would silently do nothing")
+
+        # Internally coherent is not the same as askable. The registry knows
+        # what each wrapper actually emits.
+        from protein_interpretability.collection import capabilities as _caps
+        try:
+            _caps.check_spec(self)
+        except CapabilityError as exc:
+            raise CaptureSpecError(str(exc)) from exc
         return self
 
     # ---- what it will produce ---------------------------------------------

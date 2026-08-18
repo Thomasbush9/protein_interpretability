@@ -207,6 +207,19 @@ def cmd_cohort(a) -> int:
     return 0
 
 
+# ---- models ----------------------------------------------------------------
+
+def cmd_models(a) -> int:
+    from protein_interpretability.collection import capabilities as caps
+
+    names = [a.name] if a.name else caps.available()
+    for i, name in enumerate(names):
+        if i:
+            print()
+        print(caps.describe(name))
+    return 0
+
+
 # ---- entry point -----------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -239,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--fast", action="store_true",
                    help="with --verify, check existence only and skip hashing")
     c.set_defaults(func=cmd_cohort)
+
+    m = sub.add_parser("models", help="what each model is and can be asked for")
+    m.add_argument("name", nargs="?", help="omit to describe every model")
+    m.set_defaults(func=cmd_models)
 
     i = sub.add_parser("inspect", help="static checks before submitting a job")
     i.add_argument("files", nargs="+")

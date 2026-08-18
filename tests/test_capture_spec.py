@@ -93,6 +93,21 @@ def test_refuses_a_reduction_that_would_do_nothing():
         spec(fields=("kl_site",), reduction="norm").validate()
 
 
+def test_refuses_a_norm_stored_under_a_vec_name():
+    """`dz_vec` is a vector by name; a norm under it recreates the ambiguity
+    those names exist to remove."""
+    with pytest.raises(CaptureSpecError, match="vector by name"):
+        CaptureSpec(model="of3", fields=("dz_vec",), layers="final",
+                    reduction="norm").validate()
+
+
+def test_the_vec_spelling_is_what_makes_the_cross_model_captures_readable():
+    """xm_* writes both dz_vec (direction) and dz_site (its norm), which is why
+    those archives need no guessing and the gym2s ones do."""
+    from protein_interpretability.collection.capture_spec import FIELDS
+    assert "dz_vec" in FIELDS and "ds_vec" in FIELDS
+
+
 def test_refuses_an_unsupported_dtype():
     with pytest.raises(CaptureSpecError, match="unsupported dtype"):
         spec(dtype="bfloat16").validate()
