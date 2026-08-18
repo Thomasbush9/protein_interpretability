@@ -310,7 +310,7 @@ jax_harness/           exp_* collect · analyze_*/probe_* analyse · fig_* plot
                        pi_*.py are aliases into the package — import either name
 
 configs/cohorts/       the four checksummed cohort manifests
-tests/                 model-free; name the files, collecting the dir has hung
+tests/                 model-free; `uv run pytest tests/ -q`, under a second
 ```
 
 Don't add a new `pi_*` module. New library code goes in the package.

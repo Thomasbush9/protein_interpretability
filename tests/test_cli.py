@@ -169,6 +169,19 @@ def test_inspect_still_flags_a_result_with_no_protocol_call_at_all(tmp_path):
         "the guard must still catch a block that never went through protocol()")
 
 
+def test_inspect_ignores_write_result_mentioned_in_prose(tmp_path):
+    """A module that only NAMES write_result in an error message is not a writer.
+
+    The substring test flagged pi_report, whose sole mention is inside a string
+    telling the reader to go through the seam.
+    """
+    f = tmp_path / "library.py"
+    f.write_text('def check(x):\n'
+                 '    raise ValueError("rerun it through '
+                 'pi_archive.write_result, or accept the truncation")\n')
+    assert main(["inspect", str(f)]) == 0
+
+
 def test_inspect_reports_a_syntax_error_rather_than_raising(tmp_path, capsys):
     f = tmp_path / "broken.py"
     f.write_text("def (:\n")

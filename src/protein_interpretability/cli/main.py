@@ -130,8 +130,15 @@ def cmd_inspect(a) -> int:
                 "imported without a model environment, so it cannot be "
                 "inspected on a login node")
 
-        src = path.read_text()
-        writes_result = "write_result" in src
+        # A CALL to write_result, not the string anywhere in the file. The
+        # substring test flagged pi_report, which only names write_result inside
+        # an error message telling the reader to use it -- the third false
+        # positive of this shape, and the last string match here.
+        writes_result = any(
+            isinstance(n, ast.Call)
+            and (getattr(n.func, "attr", None) == "write_result"
+                 or getattr(n.func, "id", None) == "write_result")
+            for n in ast.walk(tree))
         # Three legitimate idioms: a module-level PROTOCOL constant, or the
         # block built inline from a protocol() call reached as `pi_protocol.`,
         # `P.` or bare. Matching the text of the first two spellings missed the
