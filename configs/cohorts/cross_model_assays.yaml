@@ -1,0 +1,49 @@
+cohort: cross_model_assays
+description: "The four assays run through Boltz-2, OpenFold3 and Protenix on identical inputs, twice each. Behind xmodel_v1, xmodel_io_vec and depth_v1."
+derived_from: xm_boltz2_r1_*.npz in /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/runs
+n_assays: 4
+assays:
+  - id: NKX31_HUMAN_Tsuboyama_2023_2L9R
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/NKX31_HUMAN_Tsuboyama_2023_2L9R.csv
+      sha256: 24015ebc1f902a88c17fbe083866d26213039ab977dcd1b559cd38d6fe2810c5
+    n_single_variants: 1149
+    wt_length: 61
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel/colabfold_output/NKX31_HUMAN_Tsuboyama_2023_2L9R.a3m
+      sha256: 12da6d903faca34045aaaf1e77d3822b3b3e8ba5147414175686815dcae1014e
+      rows: 14243
+      panel: panel
+  - id: PSAE_PICP2_Tsuboyama_2023_1PSE
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PSAE_PICP2_Tsuboyama_2023_1PSE.csv
+      sha256: 27db1b317f64fb50b60a3746403c3350d39cea4fda02fe2c777e6e75f9cbdb7a
+    n_single_variants: 1219
+    wt_length: 68
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel/colabfold_output/PSAE_PICP2_Tsuboyama_2023_1PSE.a3m
+      sha256: 4e5f8c9f5db8a0d62c8ce4160f67330732f6acd54ad73e24aded8489d6b58384
+      rows: 2411
+      panel: panel
+  - id: RCRO_LAMBD_Tsuboyama_2023_1ORC
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/RCRO_LAMBD_Tsuboyama_2023_1ORC.csv
+      sha256: d46171656b15c40b79412b029cd5061346fe4041f7e4f2af9a96b71bc40446cb
+    n_single_variants: 1195
+    wt_length: 63
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel/colabfold_output/RCRO_LAMBD_Tsuboyama_2023_1ORC.a3m
+      sha256: 5b0fc31f5738d902b52c7ed9d088fb42b7451f0903b230a8e1da43db47e63478
+      rows: 827
+      panel: panel
+  - id: RS15_GEOSE_Tsuboyama_2023_1A32
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/RS15_GEOSE_Tsuboyama_2023_1A32.csv
+      sha256: 391460e9c795e39c8a92de01f1057f54e6cecbe81e528a36cf538f3cbaa1fc4b
+    n_single_variants: 1195
+    wt_length: 63
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel/colabfold_output/RS15_GEOSE_Tsuboyama_2023_1A32.a3m
+      sha256: d47ecd8a864e2346bdc9d03629c3603b09f7671e2417ba16fab33145edceea3a
+      rows: 10828
+      panel: panel

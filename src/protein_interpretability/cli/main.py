@@ -132,15 +132,23 @@ def cmd_inspect(a) -> int:
 
         src = path.read_text()
         writes_result = "write_result" in src
-        # Two idioms, both legitimate: a module-level PROTOCOL constant, or the
-        # block built inline from pi_protocol.protocol() inside main. Checking
-        # only for the constant flagged four producers that carry a protocol
-        # block in every archive they have ever written.
+        # Three legitimate idioms: a module-level PROTOCOL constant, or the
+        # block built inline from a protocol() call reached as `pi_protocol.`,
+        # `P.` or bare. Matching the text of the first two spellings missed the
+        # third and flagged a script whose protocol block is complete enough
+        # that protocol() itself would have raised without it -- the same
+        # false-positive shape as the version before it, one import alias later.
+        # Hence the AST: any call to something *named* protocol counts.
         has_protocol = any(
             isinstance(n, ast.Assign)
             and any(getattr(t, "id", "") == "PROTOCOL" for t in n.targets)
             for n in tree.body
-        ) or "pi_protocol.protocol(" in src or "protocol.protocol(" in src
+        ) or any(
+            isinstance(n, ast.Call)
+            and (getattr(n.func, "attr", None) == "protocol"
+                 or getattr(n.func, "id", None) == "protocol")
+            for n in ast.walk(tree)
+        )
         if writes_result and not has_protocol:
             notes.append(
                 "writes a result but declares no module-level PROTOCOL; the "
@@ -158,6 +166,38 @@ def cmd_inspect(a) -> int:
     if not failed:
         print(f"{len(a.files)} file(s) inspected, nothing to report")
     return 1 if failed else 0
+
+
+# ---- cohort ----------------------------------------------------------------
+
+def cmd_cohort(a) -> int:
+    # Imported here, not at module scope: `pi verify` and `pi inspect` must stay
+    # runnable from a checkout with nothing configured.
+    from protein_interpretability.collection import Cohort, CohortError
+
+    if not a.name:
+        for name in Cohort.available():
+            c = Cohort.load(name)
+            print(f"{name:22s} {len(c):3d} assays  {c.description[:60]}")
+        return 0
+
+    c = Cohort.load(a.name)
+    print(f"{c.name}: {len(c)} assays")
+    print(f"  {c.description}")
+    if a.list:
+        for assay in c:
+            print(f"  {assay.id:34s} len={assay.wt_length or '?':>4} "
+                  f"variants={assay.n_single_variants or '?':>5} "
+                  f"msa_rows={assay.msa_rows or '?':>6}")
+    if a.verify:
+        try:
+            c.verify(checksums=not a.fast)
+        except CohortError as exc:
+            print(f"\n{exc}")
+            return 1
+        how = "exist" if a.fast else "hash-match the manifest"
+        print(f"\nverified: every input {how}")
+    return 0
 
 
 # ---- entry point -----------------------------------------------------------
@@ -183,6 +223,15 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("new")
     v.add_argument("--name", help="producer stem, if the filename is not it")
     v.set_defaults(func=cmd_verify)
+
+    c = sub.add_parser("cohort", help="list cohorts, or verify one against disk")
+    c.add_argument("name", nargs="?", help="omit to list every cohort")
+    c.add_argument("--list", action="store_true", help="show each assay")
+    c.add_argument("--verify", action="store_true",
+                   help="check every input still hashes to its manifest value")
+    c.add_argument("--fast", action="store_true",
+                   help="with --verify, check existence only and skip hashing")
+    c.set_defaults(func=cmd_cohort)
 
     i = sub.add_parser("inspect", help="static checks before submitting a job")
     i.add_argument("files", nargs="+")

@@ -144,6 +144,31 @@ def test_inspect_accepts_the_inline_protocol_idiom(tmp_path):
         "module-level constant flagged four that have always carried one")
 
 
+def test_inspect_accepts_an_aliased_protocol_import(tmp_path):
+    """`from ... import protocol as P` then `P.protocol(...)`.
+
+    Matching the text `pi_protocol.protocol(` missed this and flagged a script
+    whose block is complete -- the second false positive of the same shape, one
+    import alias later. Hence matching the call, not the spelling.
+    """
+    f = tmp_path / "aliased.py"
+    f.write_text(
+        "from protein_interpretability import artifacts\n"
+        "from protein_interpretability.experiments import protocol as P\n\n"
+        "def main():\n"
+        "    artifacts.write_result(p, {}, protocol=P.protocol(design='x'))\n")
+    assert main(["inspect", str(f)]) == 0
+
+
+def test_inspect_still_flags_a_result_with_no_protocol_call_at_all(tmp_path):
+    f = tmp_path / "bare.py"
+    f.write_text("from protein_interpretability import artifacts\n\n"
+                 "def main():\n"
+                 "    artifacts.write_result(p, {}, protocol=SOME_DICT)\n")
+    assert main(["inspect", str(f)]) == 1, (
+        "the guard must still catch a block that never went through protocol()")
+
+
 def test_inspect_reports_a_syntax_error_rather_than_raising(tmp_path, capsys):
     f = tmp_path / "broken.py"
     f.write_text("def (:\n")
