@@ -135,6 +135,40 @@ def sha256(p):
 
 
 # ---- writing --------------------------------------------------------------
+def _atomic_write(path: Path, write_body) -> Path:
+    """Write via a temporary file in the same directory, then rename.
+
+    Writing in place is not safe here and the failure has already happened: a
+    job killed at the wall clock leaves a file that exists, has a plausible
+    name and size, and is truncated in the middle of a number. `pi_report`
+    carries an error message about exactly that. Worse, these run on SLURM with
+    a time limit, so the truncation arrives precisely when a sweep is longest
+    and least likely to be re-run attentively.
+
+    `os.replace` is atomic within a filesystem, so a reader sees either the old
+    archive or the complete new one and never a half-written one. The temporary
+    file is placed BESIDE the target rather than in /tmp, because a rename
+    across filesystems is a copy and gives back the torn write. The fsync is
+    what makes the guarantee survive a node failure rather than only a process
+    one -- these archives cost GPU-hours and are written once.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    try:
+        with open(tmp, "wb") as fh:
+            write_body(fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # Includes KeyboardInterrupt and SystemExit: a cancelled job must not
+        # leave its scratch file behind to be mistaken for an archive later.
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
+
+
 def write_result(path, payload, *, protocol, indent=2):
     """Write a result JSON. `protocol` is required; omitting it is a TypeError.
 
@@ -153,8 +187,8 @@ def write_result(path, payload, *, protocol, indent=2):
     else:
         body[PROTOCOL_KEY] = dict(protocol)
     body[PROVENANCE_KEY] = run_provenance()
-    Path(path).write_text(json.dumps(body, indent=indent, default=float))
-    return path
+    text = json.dumps(body, indent=indent, default=float)
+    return _atomic_write(Path(path), lambda fh: fh.write(text.encode()))
 
 
 def write_npz(path, arrays, *, protocol, compressed=True):
@@ -174,8 +208,11 @@ def write_npz(path, arrays, *, protocol, compressed=True):
                        for k, v in arrays.items()}}
     payload = dict(arrays)
     payload[NPZ_META_KEY] = np.array(json.dumps(meta, default=float))
-    (np.savez_compressed if compressed else np.savez)(path, **payload)
-    return path
+    save = np.savez_compressed if compressed else np.savez
+    # np.savez appends `.npz` when handed a path; it does not when handed a file
+    # object, which is what keeps the temporary file's name from leaking into
+    # the final one.
+    return _atomic_write(Path(path), lambda fh: save(fh, **payload))
 
 
 # ---- reading, and the guard ----------------------------------------------
@@ -402,11 +439,32 @@ class Capture:
                            if k.startswith(("dz", "ds"))}}
 
 
-def load_capture(path, *, require_vectors=False):
-    """Open a capture, optionally refusing a norm-only archive up front."""
+def load_capture(path, *, require_vectors=False, require_meta=False):
+    """Open a capture, optionally refusing one that cannot describe itself.
+
+    `require_meta` demands the embedded `_pi_meta` block, and everything written
+    through `write_npz` carries one. Captures predating that convention do not,
+    and they are the ones that cost GPU-hours to regenerate -- hence the
+    sidecar path below, and hence this being a request rather than the default.
+
+    Turn it on for anything whose number reaches a page. A capture that cannot
+    say what it holds is how `deep2_*` supplied a per-layer NORM to consumers
+    expecting a vector: the probe could not answer the question and returned
+    +0.468 rather than raising.
+    """
     p = Path(path)
     z = np.load(p, allow_pickle=True)
     cap = Capture(path=p, family=_family_of(p), files=tuple(z.files), _z=z)
+    if require_meta and NPZ_META_KEY not in cap.files:
+        side = p.with_suffix(".meta.json")
+        if not side.exists():
+            raise ValueError(
+                f"{p.name} carries no embedded {NPZ_META_KEY!r} block and has "
+                f"no sidecar, so it cannot state its own protocol, shapes or "
+                f"provenance. Write it through write_npz, or record a sidecar "
+                f"with write_capture_sidecar -- do not infer the block, since "
+                f"an inferred one is indistinguishable from a recorded one "
+                f"afterwards.")
     if require_vectors and not cap.has_vectors():
         raise ValueError(
             f"{p.name} holds per-layer norms only, and this analysis needs "

@@ -39,7 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from protein_interpretability import artifacts
-from protein_interpretability.analysis import statistics as st
+from protein_interpretability.analysis.probes import leave_one_group_out
 from protein_interpretability.collection import Cohort
 
 W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
@@ -47,30 +47,6 @@ W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
 EXPECTED = 0.7578272292356677          # transfer_full.json predictors.internal_vec.mean
 LAM = 10.0                             # analyze_transfer's default --lam
 TOL = 1e-6
-
-
-def zscore(a: np.ndarray) -> np.ndarray:
-    """Per-column standardisation. The 1e-9 matches the producer exactly; a
-    constant column would otherwise divide by zero and poison the whole fit."""
-    a = np.asarray(a, dtype=float)
-    return (a - a.mean(0)) / (a.std(0) + 1e-9)
-
-
-def ridge(X: np.ndarray, y: np.ndarray, lam: float) -> np.ndarray:
-    """Ridge with an intercept that is NOT penalised.
-
-    Shrinking the intercept toward zero would pull every prediction toward the
-    origin of a target that was only centred within assay, which is a bias the
-    leave-one-assay-out design would then read as poor transfer.
-    """
-    Xb = np.column_stack([X, np.ones(len(X))])
-    A = Xb.T @ Xb + lam * np.eye(Xb.shape[1])
-    A[-1, -1] -= lam
-    return np.linalg.solve(A, Xb.T @ y)
-
-
-def predict(w: np.ndarray, X: np.ndarray) -> np.ndarray:
-    return np.column_stack([X, np.ones(len(X))]) @ w
 
 
 def main() -> int:
@@ -83,27 +59,24 @@ def main() -> int:
     cohort.verify()
 
     # ---- load: 128 final-layer channels and the assay score, per assay -----
-    data = {}
+    blocks = {}
     for assay in cohort:
         cap = artifacts.load_capture(Path(a.captures) / f"gym2s_{assay.id}.npz")
         dz = np.asarray(cap.field("dz_site"), float)      # [n, n_layers, 128]
-        y = np.asarray(cap.field("score"), float)
-        short = assay.id.split("_")[0]
-        data[short] = {"X": zscore(dz[:, -1, :]), "y": y, "yz": zscore(y)}
+        blocks[assay.id.split("_")[0]] = {
+            "X": dz[:, -1, :],                            # FINAL layer channels
+            "y": np.asarray(cap.field("score"), float),
+        }
 
-    names = sorted(data)
-    print(f"{len(names)} assays, {data[names[0]]['X'].shape[1]} channels\n")
+    names = sorted(blocks)
+    print(f"{len(names)} assays, {blocks[names[0]]['X'].shape[1]} channels\n")
 
     # ---- leave one assay out ----------------------------------------------
-    per_assay = {}
+    # The standardisation, the unpenalised intercept and the pooling all live in
+    # the library, so this script states the SCIENCE and not the arithmetic.
+    per_assay = leave_one_group_out(blocks, lam=a.lam)
     for held in names:
-        train = [n for n in names if n != held]
-        Xtr = np.concatenate([data[n]["X"] for n in train], 0)
-        ytr = np.concatenate([data[n]["yz"] for n in train], 0)
-        w = ridge(Xtr, ytr, a.lam)
-        rho = st.spearman(predict(w, data[held]["X"]), data[held]["y"])
-        per_assay[held] = float(rho)
-        print(f"  hold out {held:6s}  train n={len(ytr):5d}  rho={rho:+.4f}")
+        print(f"  hold out {held:6s}  rho={per_assay[held]:+.4f}")
 
     mean = float(np.mean(list(per_assay.values())))
     print(f"\n  internal_vec mean = {mean:+.6f}   (report: {EXPECTED:+.6f})")

@@ -30,30 +30,24 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def computed():
-    from experiments.analysis.reproduce_headline_transfer import (  # noqa: E402
-        ridge, predict, zscore)
+    # Imports the LIBRARY, not the experiment script. Reaching into
+    # experiments/ worked under `python -m pytest`, which puts the working
+    # directory on sys.path, and failed under `uv run pytest`, which does not --
+    # so the suite passed locally and was broken by the documented command.
     import numpy as np
     from protein_interpretability import artifacts
-    from protein_interpretability.analysis import statistics as st
+    from protein_interpretability.analysis.probes import leave_one_group_out
     from protein_interpretability.collection import Cohort
 
-    data = {}
+    blocks = {}
     for assay in Cohort.load("basis_assays"):
         cap = artifacts.load_capture(W / "runs" / f"gym2s_{assay.id}.npz")
         dz = np.asarray(cap.field("dz_site"), float)
-        y = np.asarray(cap.field("score"), float)
-        data[assay.id.split("_")[0]] = {
-            "X": zscore(dz[:, -1, :]), "y": y, "yz": zscore(y)}
-
-    out = {}
-    names = sorted(data)
-    for held in names:
-        train = [n for n in names if n != held]
-        Xtr = np.concatenate([data[n]["X"] for n in train], 0)
-        ytr = np.concatenate([data[n]["yz"] for n in train], 0)
-        w = ridge(Xtr, ytr, 10.0)
-        out[held] = float(st.spearman(predict(w, data[held]["X"]), data[held]["y"]))
-    return out
+        blocks[assay.id.split("_")[0]] = {
+            "X": dz[:, -1, :],
+            "y": np.asarray(cap.field("score"), float),
+        }
+    return leave_one_group_out(blocks, lam=10.0)
 
 
 @pytest.fixture(scope="module")
