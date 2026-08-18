@@ -31,6 +31,9 @@ glob matched; `Cohort.load(name).verify()` refuses if an input moved.
 
 Do not add a `pi_*` module. New library code goes in the package.
 
+`notebooks/explore_trunk_svd.py` is a marimo notebook that walks a capture through to the headline; it reads archives and loads no model.
+`uv run --group notebook marimo edit notebooks/explore_trunk_svd.py`
+
 **`docs/API.md` is the guide for writing scripts against this library**, with a
 runnable example at `experiments/analysis/example_transfer_probe.py`. Read it
 before adding an experiment.

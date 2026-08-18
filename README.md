@@ -135,6 +135,21 @@ orientation rule.
 
 ---
 
+## Inspecting a result interactively
+
+```bash
+uv run --group notebook marimo edit notebooks/explore_trunk_svd.py
+```
+
+Walks one capture through to the headline: what a trunk capture holds, where in
+the 64 layers the signal lives, the shared basis and its variance spectrum, PC2
+against the assay, and the leave-one-assay-out probe reproducing +0.758. It
+reads archives and loads no model, so it opens on a login node in seconds.
+
+marimo notebooks are plain Python files — they diff, review and run headless
+(`uv run --group notebook python notebooks/explore_trunk_svd.py`) like any other
+module here.
+
 ## Data
 
 Datasets, captures, weights and reports live outside this repository under
