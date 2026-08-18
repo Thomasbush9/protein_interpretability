@@ -76,6 +76,9 @@ def parse_args(argv=None):
     ap.add_argument("--assay", help="defaults to the cohort's only assay")
     ap.add_argument("--n-variants", type=int, default=8)
     ap.add_argument("--mutants-from", help="take the variants from this capture")
+    ap.add_argument("--mutants", help="explicit comma-separated list; also sets "
+                                      "the ORDER they are collected in, which "
+                                      "is what isolates first-call effects")
     ap.add_argument("--msa", default="full", choices=("full", "subsample"))
     ap.add_argument("--msa-cap", type=int, default=2048,
                     help="matches exp_gym2's default, which is what the "
@@ -87,6 +90,8 @@ def parse_args(argv=None):
 
 
 def chosen_mutants(a, rows) -> list[str]:
+    if a.mutants:
+        return [m.strip() for m in a.mutants.split(",") if m.strip()]
     if a.mutants_from:
         with np.load(a.mutants_from, allow_pickle=True) as z:
             names = [str(m) for m in z["mutant"]]
