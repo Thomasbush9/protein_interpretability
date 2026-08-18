@@ -129,20 +129,33 @@ def test_a_supported_field_passes():
 
 # ---- drift detection against a real model ---------------------------------
 
-class FakeStacked:
-    def __init__(self, depth):
-        self.transition_z = type("T", (), {
-            "fc1": type("F", (), {"weight": type("W", (), {"shape": (depth, 4)})()})()
-        })()
+class _Node:
+    """A plain attribute holder, so the walker sees instance attributes the way
+    it does on a real equinox module."""
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
 
 
-class FakeModel:
-    """Shaped like the joltz network the wrappers hold in `.model`."""
+def fake_model(depth, subsample=True, *, stack_attr="stacked_parameters",
+               container="pairformer_module", inner="model"):
+    """Shaped like the network a wrapper holds in `.model`.
 
-    def __init__(self, depth, subsample=True):
-        self.pairformer_module = type("PF", (), {})()
-        self.pairformer_module.stacked_parameters = FakeStacked(depth)
-        self.msa_module = type("MM", (), {"subsample_msa": subsample})()
+    Leaves are real arrays: every leaf under a stacked block shares the leading
+    scan axis, which is what the depth is read from.
+    """
+    import numpy as np
+
+    stacked = _Node(transition_z=_Node(fc1=_Node(weight=np.zeros((depth, 4)))))
+    net = _Node(msa_module=_Node(subsample_msa=subsample))
+    setattr(net, container, _Node(**{stack_attr: stacked}))
+    # Wrappers hold the network one level down, and not always under the same
+    # name: Protenix uses `.protenix` where the others use `.model`.
+    return _Node(**{inner: net})
+
+
+def FakeModel(depth, subsample=True):
+    return fake_model(depth, subsample)
 
 
 def test_verify_accepts_a_model_matching_the_table():
@@ -152,13 +165,44 @@ def test_verify_accepts_a_model_matching_the_table():
 
 
 def test_verify_reports_what_it_could_not_check_rather_than_implying_agreement():
-    """The first real run reported of3 and protenix as agreeing on the strength
-    of having read nothing: their wrappers do not expose the trunk the way
-    Boltz-2's does. "Nothing contradicted me" is not agreement."""
-    opaque = object()
-    out = caps.verify_against_model("of3", opaque)
+    """"Nothing contradicted me" is not agreement. The first real run reported
+    of3 and protenix as agreeing having read nothing from either."""
+    out = caps.verify_against_model("of3", _Node())
     assert out["checked"] == {}
     assert out["unverified"] == ["n_trunk_blocks"], out
+
+
+def test_each_model_is_read_from_where_it_actually_keeps_its_stack():
+    """The three wrappers name it differently -- pairformer_module /
+    stacked_parameters for Boltz-2, pairformer_stack / stacked_params for
+    OpenFold3, pairformer_stack / stacked_parameters for Protenix. One generic
+    accessor found only the first and called the others agreement."""
+    of3 = fake_model(48, container="pairformer_stack", stack_attr="stacked_params")
+    assert caps.observed_trunk_depth("of3", of3) == 48
+
+    ptx = fake_model(16, container="pairformer_stack",
+                     stack_attr="stacked_parameters", inner="protenix")
+    assert caps.observed_trunk_depth("protenix", ptx) == 16
+
+    # Read through the wrong accessor, OpenFold3's stack is invisible.
+    assert caps.observed_trunk_depth("boltz2", of3) is None
+
+
+def test_a_wrong_depth_is_caught_for_of3_too():
+    with pytest.raises(caps.CapabilityError, match="no longer describe"):
+        caps.verify_against_model(
+            "of3", fake_model(64, container="pairformer_stack",
+                              stack_attr="stacked_params"))
+
+
+def test_protenix_is_read_through_its_own_inner_field():
+    """`.protenix`, not `.model`. Reading it as `.model` is why the real run
+    reported it unverified after of3 was already working."""
+    ptx = fake_model(16, container="pairformer_stack",
+                     stack_attr="stacked_parameters", inner="protenix")
+    assert caps.observed_trunk_depth("protenix", ptx) == 16
+    assert caps.verify_against_model("protenix", ptx)["checked"][
+        "n_trunk_blocks"] == 16
 
 
 def test_verify_raises_when_the_table_no_longer_describes_the_model():

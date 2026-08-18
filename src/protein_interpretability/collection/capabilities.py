@@ -190,6 +190,70 @@ def check_msa(name: str, *, use_msa: bool) -> None:
             f"{cap.name} must put the other models in the same mode.")
 
 
+# Where each wrapper keeps its stacked Pairformer parameters, from the wrapper
+# down. Three names differ across three models, and the INNER field differs too
+# -- Protenix holds its network at `.protenix` where the others use `.model`,
+# which pi_models.INNER_FIELD records for the same reason. A single generic
+# accessor found only Boltz-2 and reported the rest as agreement.
+#
+# Paths are tried in order, so a bare network (no wrapper) also resolves.
+TRUNK_STACK: dict[str, tuple[tuple[str, ...], ...]] = {
+    "boltz2": (("model", "pairformer_module", "stacked_parameters"),
+               ("pairformer_module", "stacked_parameters")),
+    "of3": (("model", "pairformer_stack", "stacked_params"),
+            ("pairformer_stack", "stacked_params")),
+    "protenix": (("protenix", "pairformer_stack", "stacked_parameters"),
+                 ("model", "pairformer_stack", "stacked_parameters"),
+                 ("pairformer_stack", "stacked_parameters")),
+}
+
+
+def _leading_axis(node, _depth=0):
+    """The stack axis of a stacked-parameter pytree, found without importing jax.
+
+    Every leaf under a stacked block carries the same leading axis -- that is
+    what `jax.lax.scan` scans over -- so the first array-like found gives the
+    block count. Walking the structure by hand rather than with
+    `jax.tree_util.tree_leaves` is what keeps this module importable on a login
+    node, which is the property the whole registry exists to have.
+    """
+    if _depth > 6:
+        return None
+    shape = getattr(node, "shape", None)
+    if isinstance(shape, tuple) and shape:
+        return int(shape[0])
+    children = []
+    if hasattr(node, "__dict__"):
+        children = list(vars(node).values())
+    elif isinstance(node, dict):
+        children = list(node.values())
+    elif isinstance(node, (list, tuple)):
+        children = list(node)
+    for child in children:
+        if child is None or isinstance(child, (str, bytes, int, float, bool)):
+            continue
+        found = _leading_axis(child, _depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def observed_trunk_depth(name: str, model) -> int | None:
+    """Read a loaded model's trunk depth, or None if this wrapper does not expose
+    it where the table expects."""
+    for path in TRUNK_STACK.get(name, ()):
+        node = model
+        for attr in path:
+            node = getattr(node, attr, None)
+            if node is None:
+                break
+        else:
+            found = _leading_axis(node)
+            if found is not None:
+                return found
+    return None
+
+
 def verify_against_model(name: str, model) -> dict:
     """Compare this table to a real loaded model. Call from a GPU job.
 
@@ -212,19 +276,13 @@ def verify_against_model(name: str, model) -> dict:
     declared = {a for a in ("n_trunk_blocks",) if getattr(cap, a) is not None}
 
     inner = getattr(model, "model", model)
-    pf = getattr(inner, "pairformer_module", None)
-    stacked = getattr(pf, "stacked_parameters", None)
-    if stacked is not None:
-        try:
-            depth = int(stacked.transition_z.fc1.weight.shape[0])
-        except AttributeError:
-            depth = None
-        if depth is not None:
-            checked["n_trunk_blocks"] = depth
-            if cap.n_trunk_blocks is not None and depth != cap.n_trunk_blocks:
-                problems.append(
-                    f"trunk depth: table says {cap.n_trunk_blocks}, model has "
-                    f"{depth}")
+    depth = observed_trunk_depth(name, model)
+    if depth is not None:
+        checked["n_trunk_blocks"] = depth
+        if cap.n_trunk_blocks is not None and depth != cap.n_trunk_blocks:
+            problems.append(
+                f"trunk depth: table says {cap.n_trunk_blocks}, model has "
+                f"{depth}")
 
     mm = getattr(inner, "msa_module", None)
     if mm is not None and hasattr(mm, "subsample_msa"):
