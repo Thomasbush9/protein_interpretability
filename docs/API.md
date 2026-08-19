@@ -1,13 +1,55 @@
 # Writing your own scripts
 
-Two runnable scripts to start from:
+Three runnable scripts to start from:
 
+- **`experiments/collection/collect_xmodel_layers.py`** — a whole collection run
+  as one declaration: cohort, model, regime, fields, layers, output. Copy this
+  one to collect anything.
 - **`experiments/analysis/reproduce_headline_transfer.py`** — reproduces the
   report's headline (+0.758) exactly, in ~130 lines. If you want to see what a
   real result is actually made of, read this one.
 - **`experiments/analysis/example_transfer_probe.py`** — the same shape at
   minimum size: cohort → verify → captures → statistic → archived result.
-  Copy this one.
+  Copy this one for analysis.
+
+## Declaring a collection run
+
+```python
+from protein_interpretability.collection import CaptureSpec, Cohort
+from protein_interpretability.collection.task import CollectionTask, ModelSpec
+
+task = CollectionTask(
+    name="xmodel_layers_of3",
+    cohort=Cohort.load("heldout_assays"),
+    model=ModelSpec(name="of3", backend="mosaic", recycles=3, seed=0,
+                    msa="subsample", msa_cap=2048, network="blocked"),
+    capture=CaptureSpec(model="of3", fields=("dz_vec", "kl_site"),
+                        layers=(0, 23, 47), reduction="vector", recycles=3),
+    output="runs/xmodel_layers",
+    resume="resume",
+)
+
+resolved = task.inspect()     # login-node safe: no backend, no CUDA
+print(resolved.describe())    # depth, resolved layers, size, task id
+task.run()                    # the first thing that imports a backend
+```
+
+`inspect()` resolves `layers` against the model's own trunk depth — `"final"` is
+block 63 in Boltz-2, 47 in OpenFold3 and 15 in Protenix — verifies every cohort
+checksum, refuses a spec the model cannot satisfy, and prices the result. It
+also refuses a task that declares the same thing twice and differently, such as
+one recycle count in the model spec and another in the capture spec.
+
+`ResolvedTask.task_id` hashes every scientific choice and deliberately excludes
+the output path, so writing the same measurement somewhere else is the same
+measurement, while changing the seed is not. Resume compares it: an artifact
+produced by a *different* task is never overwritten.
+
+Layer selection is honoured at the artifact, not in the trunk. Each model's
+Pairformer is a `jax.lax.scan` over stacked parameters, so all blocks are
+traversed whatever you ask for; what a selection saves is storage, and the
+artifact records both the expression requested and the absolute indices it
+resolved to.
 
 
 Everything here runs from a checkout. The library lives in

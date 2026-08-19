@@ -42,6 +42,7 @@ import csv
 import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,30 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pi_models  # noqa: E402
 import pi_capture  # noqa: E402
 from exp_gym import graft_a3m  # noqa: E402
+
+
+@dataclass
+class _Args:
+    """The argparse namespace, as a type.
+
+    `collect_assay` was lifted out of `main()` verbatim, and its body reads
+    every setting off `args`. Rebuilding that object rather than rewriting a
+    hundred lines of `args.model` into `model` is what makes the extraction a
+    move rather than an edit -- the diff shows no expression changed, which is
+    the only cheap way to be sure the numerics did not.
+    """
+
+    model: str
+    assay: str
+    assay_dir: str
+    a3m: str
+    work: object
+    n_variants: int
+    recycles: int
+    sampling_steps: int
+    msa_cap: int
+    msa: str
+    out: object
 
 
 def softmax(x):
@@ -83,23 +108,25 @@ def distogram_per_layer(name, inner, z_layers, mask):
     return np.stack(out)          # [n_layers, N, N, B]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True,
-                    choices=["of3", "protenix", "boltz2"])
-    ap.add_argument("--assay", required=True)
-    ap.add_argument("--assay-dir", required=True)
-    ap.add_argument("--a3m", required=True)
-    ap.add_argument("--work", required=True)
-    ap.add_argument("--n-variants", type=int, default=100)
-    ap.add_argument("--recycles", type=int, default=3)
-    ap.add_argument("--sampling-steps", type=int, default=200)
-    ap.add_argument("--msa-cap", type=int, default=2048)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--msa", default="subsample",
-                    choices=pi_models.MSA_REGIMES,
-                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
-    args = ap.parse_args()
+def collect_assay(model, assay, assay_dir, a3m, work, *, n_variants=100,
+                  recycles=3, sampling_steps=200, msa_cap=2048,
+                  msa="subsample", out_path=None):
+    """One assay through one model. Returns the arrays; writes nothing.
+
+    EXTRACTED FROM `main()` WITHOUT CHANGING AN EXPRESSION. Every line below was
+    main's body; only the argument names changed (`args.model` -> `model`) and
+    the `np.savez_compressed` moved out to the caller. It was pulled out so the
+    package's adapter can run the same numerics rather than reimplementing them
+    -- the archived cross-model captures came from this code, and a second
+    implementation of it would be a second thing to validate.
+
+    `out_path` is accepted and ignored except in the log line, so the message a
+    reader sees still names the file the caller is about to write.
+    """
+    args = _Args(model=model, assay=assay, assay_dir=assay_dir, a3m=a3m,
+                 work=work, n_variants=n_variants, recycles=recycles,
+                 sampling_steps=sampling_steps, msa_cap=msa_cap, msa=msa,
+                 out=out_path)
 
     import jax
     print(f"MSA server blocked at: {pi_models.block_network()}", flush=True)
@@ -253,10 +280,37 @@ def main():
     # argument, so the record describes what ran.
     for _k, _v in pi_models.regime_block(args.model, wrapper).items():
         out[_k] = np.array(str(_v))
-    np.savez_compressed(args.out, **out)
-    print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
+    print(f"\n[{time.time()-t0:6.1f}s] collected {args.out}  "
           f"({len(rec)} variants x {nL} layers; dz_vec "
           f"{out['dz_vec'].shape})", flush=True)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", required=True,
+                    choices=["of3", "protenix", "boltz2"])
+    ap.add_argument("--assay", required=True)
+    ap.add_argument("--assay-dir", required=True)
+    ap.add_argument("--a3m", required=True)
+    ap.add_argument("--work", required=True)
+    ap.add_argument("--n-variants", type=int, default=100)
+    ap.add_argument("--recycles", type=int, default=3)
+    ap.add_argument("--sampling-steps", type=int, default=200)
+    ap.add_argument("--msa-cap", type=int, default=2048)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--msa", default="subsample",
+                    choices=pi_models.MSA_REGIMES,
+                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
+    args = ap.parse_args()
+
+    out = collect_assay(
+        args.model, args.assay, args.assay_dir, args.a3m, args.work,
+        n_variants=args.n_variants, recycles=args.recycles,
+        sampling_steps=args.sampling_steps, msa_cap=args.msa_cap,
+        msa=args.msa, out_path=args.out)
+    np.savez_compressed(args.out, **out)
+    print(f"wrote {args.out}", flush=True)
 
 
 if __name__ == "__main__":
