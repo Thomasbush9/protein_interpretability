@@ -88,7 +88,10 @@ REGISTRY: dict[str, ModelCapabilities] = {
         backend="joltz (pi_core) or mosaic (pi_models)",
         evidence=("depths and widths from xm_boltz2_r1_*.npz and depth_v1's "
                   "n_layers_per_model; bin centres from pi_core.BIN_CENTRES, "
-                  "which every archived Boltz-2 number was computed with."),
+                  "which every archived Boltz-2 number was computed with; "
+                  "capture fields are the UNION of what gym2s_* and xm_* "
+                  "actually hold, checked against the archives by "
+                  "tests/test_capture_fields_match_archives.py."),
         n_trunk_blocks=64,
         pair_width=PAIR_WIDTH,
         single_width=SINGLE_WIDTH,
@@ -97,9 +100,10 @@ REGISTRY: dict[str, ModelCapabilities] = {
         plddt_granularity="token",
         supports_msa=True,
         subsamples_msa_by_default=True,     # measured: mosaic builds it True/1024
-        capture_fields=("dz_site", "ds_site", "kl_site", "kl_glob", "shift_site",
-                        "shift_glob", "spread_site", "spread_glob", "disto",
-                        "ca", "plddt", "plddt_site", "score", "pos"),
+        capture_fields=("dz_vec", "ds_vec", "dz_site", "ds_site",
+                        "kl_site", "kl_glob", "shift_site", "shift_glob",
+                        "spread_site", "spread_glob", "disto", "ca",
+                        "plddt", "plddt_mean", "plddt_site", "score", "pos"),
     ),
     "of3": ModelCapabilities(
         name="of3",
@@ -107,13 +111,22 @@ REGISTRY: dict[str, ModelCapabilities] = {
         backend="mosaic",
         evidence=("depth and widths from xm_of3_r1_*.npz and depth_v1; the "
                   "distogram grid is NOT recorded here -- read it from the "
-                  "model and check it with records.assert_comparable."),
+                  "model and check it with records.assert_comparable. Capture "
+                  "fields are read off xm_of3_r1_*.npz itself."),
         n_trunk_blocks=48,
         pair_width=PAIR_WIDTH,
         single_width=SINGLE_WIDTH,
         plddt_granularity="atom",           # per-ATOM here, per-token elsewhere
         supports_msa=True,
-        capture_fields=("dz_vec", "ds_vec", "dz_site", "ds_site", "ca", "plddt"),
+        # kl_site and kl_glob were missing from this list while every
+        # xm_of3_r1_*.npz on disk carried both, so a spec asking for what this
+        # model demonstrably produces was refused before it ran. The KL is
+        # computed from OF3's OWN distogram head per layer, which is why it is
+        # available without the bin grid being recorded: it never crosses
+        # models. A cross-model KL still needs records.assert_comparable.
+        capture_fields=("dz_vec", "ds_vec", "dz_site", "ds_site",
+                        "kl_site", "kl_glob", "ca", "plddt", "plddt_mean",
+                        "plddt_site", "score", "pos"),
         unknown=("distogram_bins", "distogram_centres"),
     ),
     "protenix": ModelCapabilities(
@@ -121,13 +134,16 @@ REGISTRY: dict[str, ModelCapabilities] = {
         architecture="Protenix",
         backend="mosaic",
         evidence=("depth and widths from xm_protenix_r1_*.npz and depth_v1; the "
-                  "distogram grid is NOT recorded here."),
+                  "distogram grid is NOT recorded here. Capture fields are read "
+                  "off xm_protenix_r1_*.npz itself."),
         n_trunk_blocks=16,
         pair_width=PAIR_WIDTH,
         single_width=SINGLE_WIDTH,
         plddt_granularity="token",
         supports_msa=True,
-        capture_fields=("dz_vec", "ds_vec", "dz_site", "ds_site", "ca", "plddt"),
+        capture_fields=("dz_vec", "ds_vec", "dz_site", "ds_site",
+                        "kl_site", "kl_glob", "ca", "plddt", "plddt_mean",
+                        "plddt_site", "score", "pos"),
         unknown=("distogram_bins", "distogram_centres"),
     ),
     "af2": ModelCapabilities(

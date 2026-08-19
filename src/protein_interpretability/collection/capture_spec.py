@@ -68,7 +68,13 @@ FIELDS: dict[str, tuple[tuple, str]] = {
     "spread_glob": (("V", "L"), "distogram spread, global"),
     "disto":     (("V", "P", "B"), "distogram logits over sampled pairs"),
     "ca":        (("V", "T", 3), "CA coordinates"),
-    "plddt":     (("V",), "mean pLDDT"),
+    # Two spellings for the chain mean, because two capture families chose
+    # different names for it: `gym2s_*` writes `plddt`, `xm_*` writes
+    # `plddt_mean`. Both are declared rather than one being renamed, because
+    # renaming would make one of the two families unreadable, and the whole
+    # point of the registry is to describe what is on disk.
+    "plddt":     (("V",), "mean pLDDT (gym2/gym3 spelling)"),
+    "plddt_mean": (("V",), "mean pLDDT (xm spelling)"),
     "plddt_site": (("V",), "pLDDT at the mutated position"),
     "score":     (("V",), "assay score"),
     "pos":       (("V",), "mutated position, 0-based"),

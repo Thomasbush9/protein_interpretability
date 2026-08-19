@@ -112,9 +112,27 @@ def test_an_alignment_is_refused_for_a_single_sequence_model():
 
 
 def test_a_field_the_wrapper_does_not_emit_is_refused():
-    spec = CaptureSpec(model="of3", fields=("kl_glob",), layers="final")
+    """`disto` is the honest example: only the Boltz-2 gym2s path stores the
+    sampled distogram logits, and no of3 capture in this project holds one.
+
+    This test used to make the same point with `kl_glob`, which was wrong --
+    every `xm_of3_r1_*.npz` on disk carries `kl_glob` and `kl_site`, computed
+    per layer from OF3's own distogram head. The registry had them missing and
+    this test asserted the omission was correct, so the two agreed with each
+    other and neither agreed with the archives. That is what
+    `tests/test_capture_fields_match_archives.py` now checks against.
+    """
+    spec = CaptureSpec(model="of3", fields=("disto",), layers="final",
+                       n_pairs=100)
     with pytest.raises(CaptureSpecError, match="does not produce"):
         spec.validate()
+
+
+def test_the_kl_fields_of3_really_does_emit_are_accepted():
+    CaptureSpec(model="of3", fields=("kl_glob", "kl_site"),
+                layers="final").validate()
+    CaptureSpec(model="protenix", fields=("kl_glob", "kl_site"),
+                layers="final").validate()
 
 
 def test_a_capture_against_a_model_with_no_recorded_fields_is_refused():
