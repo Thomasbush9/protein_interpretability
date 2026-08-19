@@ -55,6 +55,45 @@ COHORTS = {
 STRIP = {"basis_assays": "gym2s_", "heldout_assays": "gym3p3_",
          "cross_model_assays": "xm_boltz2_r1_", "intervention_assays": "steerall_"}
 
+# Cohorts named by an EXPLICIT list rather than by a glob over existing
+# captures. Every cohort above is "the assays we already have captures for",
+# which is the right definition for describing archived work and the wrong one
+# for planning new work: a cohort that can only name what has already been run
+# cannot express the run you want next.
+#
+# `length_ladder` exists because the length question could not be asked. All 217
+# ProteinGym substitution assays are on disk, 31 have alignments, and 26 of
+# those are Tsuboyama mini-domains under 100 residues -- so every cohort here
+# spans 40-118 aa while the median ProteinGym assay is 245. These five are every
+# assay with an alignment above 100 residues, and they run 101 -> 403.
+#
+# COST, MEASURED RATHER THAN ARGUED. The obvious argument -- the Pairformer's
+# triangle operations are O(N^3), so a 403-residue protein must be hundreds of
+# times a 65-residue one -- is wrong at the sizes we can check. Measured
+# 2026-08-19 at 100 variants: protenix costs 8.3 s/variant at 40 aa and
+# 10.1 s/variant at 118 aa, a 1.2x increase for a 3x longer protein. Per-variant
+# time is dominated by re-parsing the alignment and by the sampler's fixed 200
+# steps, both length-independent.
+#
+# That makes this cohort far cheaper than a cubic estimate suggests, but 403 aa
+# is still 3.4x beyond anything measured, and the pair tensor does grow as N^2:
+# at 403 residues boltz2's per-layer z stack is ~5.3 GB and the per-layer
+# distogram ~2.7 GB, which fits an 80 GB H100 but is where the real constraint
+# will show up first. Run PTEN alone before running the cohort.
+EXPLICIT = {
+    "length_ladder": (
+        ["CCDB_ECOLI_Tripathi_2016",        # 101 aa
+         "PHOT_CHLRE_Chen_2023",            # 118 aa
+         "ESTA_BACSU_Nutschel_2020",        # 212 aa
+         "TPMT_HUMAN_Matreyek_2018",        # 245 aa
+         "PTEN_HUMAN_Matreyek_2021"],       # 403 aa
+        "Every ProteinGym assay with an alignment on disk above 100 residues, "
+        "101 to 403 aa. Exists to ask whether the internal-versus-output result "
+        "holds on proteins larger than the Tsuboyama mini-domains every other "
+        "cohort here is made of. Overlaps heldout_assays by two assays, so use "
+        "Cohort.assert_disjoint before making a held-out claim from it."),
+}
+
 # The smoke cohort is one assay, chosen for being the smallest thing that is
 # still a real assay: ARGR is 69 residues with a 7056-row alignment, so a slice
 # over a handful of its variants exercises the whole path in minutes rather
@@ -157,13 +196,36 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(W / "runs"))
     ap.add_argument("--out", required=True)
+    ap.add_argument("--only", action="append",
+                    help="write only these cohorts. Regenerating every "
+                         "manifest rewrites checksums for cohorts nobody "
+                         "meant to touch, so a targeted addition says so.")
     a = ap.parse_args()
 
     runs = Path(a.runs)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    only = set(a.only) if a.only else None
+
+    for name, (ids, description) in EXPLICIT.items():
+        if only and name not in only:
+            continue
+        doc = {
+            "cohort": name,
+            "description": description,
+            "derived_from": "an explicit list in build_cohort_manifests.EXPLICIT",
+            "n_assays": len(ids),
+            "assays": [describe(x) for x in ids],
+        }
+        missing = [e["id"] for e in doc["assays"] if "MISSING" in e]
+        path = out_dir / f"{name}.yaml"
+        path.write_text(yaml_dump(doc))
+        flag = f"  MISSING INPUTS: {missing}" if missing else ""
+        print(f"{name:22s} {len(ids):3d} assays -> {path}{flag}")
 
     for name, (glob, description) in COHORTS.items():
+        if only and name not in only:
+            continue
         prefix = STRIP[name]
         assays = sorted(
             p.name[len(prefix):-len(".npz")] for p in runs.glob(glob))
@@ -179,6 +241,9 @@ def main():
         path.write_text(yaml_dump(doc))
         flag = f"  MISSING INPUTS: {missing}" if missing else ""
         print(f"{name:22s} {len(assays):3d} assays -> {path}{flag}")
+
+    if only and "smoke_pairformer" not in only:
+        return
 
     smoke = {
         "cohort": "smoke_pairformer",
