@@ -15,4 +15,10 @@ from protein_interpretability.collection.cohorts import (
     CohortError,
 )
 
+# `reductions` is NOT re-exported here on purpose: it imports numpy, and
+# `cohorts` is deliberately dependency-free so a cohort can be inspected in an
+# environment with no scientific stack. Import it as a submodule --
+# `from protein_interpretability.collection import reductions` -- which is the
+# only place that cost is paid.
+
 __all__ = ["Assay", "CaptureSpec", "CaptureSpecError", "Cohort", "CohortError"]
