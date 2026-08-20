@@ -1,0 +1,324 @@
+cohort: panel5_assays
+description: "The 29-assay ProteinGym expansion panel: a length axis at fixed phenotype (fitness, 101-630 aa) and a phenotype axis at matched length (fitness / abundance / activity). Chosen by select_panel.py, one assay per protein, N_eff >= 1000, soluble-first so membrane-ness does not track length. Contains NO stability assays -- ProteinGym has none above 100 aa -- so it measures the boundary of the stability result rather than confirming it."
+derived_from: an explicit list in build_cohort_manifests.EXPLICIT
+n_assays: 29
+assays:
+  - id: AACC1_PSEAI_Dandage_2018
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/AACC1_PSEAI_Dandage_2018.csv
+      sha256: 1843360c41bfa7fbdbb81b5e4f52dc0bd4e7df9592a50693240ddefb9fe7c158
+    n_single_variants: 1801
+    wt_length: 177
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/AACC1_PSEAI_Dandage_2018.a3m
+      sha256: 9c4dc7e15cb02e82246f84ffa8e0cc24fc287ec78502c9039bc1c636cc33432f
+      rows: 4081
+      panel: panel5
+  - id: DYR_ECOLI_Nguyen_2023
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/DYR_ECOLI_Nguyen_2023.csv
+      sha256: c47b72c8880cd106fd68ef8d226e1c0811b4410d819e2553ecb4b9f43032a49b
+    n_single_variants: 2916
+    wt_length: 159
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/DYR_ECOLI_Nguyen_2023.a3m
+      sha256: 6161281149d415884b1ba0dc02f60c83d5c34728c490d2263d8d49762bad06d0
+      rows: 15232
+      panel: panel5
+  - id: CALM1_HUMAN_Weile_2017
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/CALM1_HUMAN_Weile_2017.csv
+      sha256: cadc19e35beab1051c08e2961f0d8b9e97f5c5c3cd627a73ebffd0ebeabbcf5d
+    n_single_variants: 1813
+    wt_length: 149
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/CALM1_HUMAN_Weile_2017.a3m
+      sha256: 4c0a3b173e7ea1b8a4aa0ce4a0c0f05a4185e2ed4b2686b3c658b6e03b2d496c
+      rows: 21161
+      panel: panel5
+  - id: SUMO1_HUMAN_Weile_2017
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/SUMO1_HUMAN_Weile_2017.csv
+      sha256: 71fd17bba2e8a6cbca9ea051c29eebb055d27022b4b432aeb08271b9d4b63a0c
+    n_single_variants: 1700
+    wt_length: 101
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/SUMO1_HUMAN_Weile_2017.a3m
+      sha256: 8fd2a445ec423ee91de87daf56b57ce1aca6fbf4a8d6a84eddf4e77d8566392f
+      rows: 8805
+      panel: panel5
+  - id: REV_HV1H2_Fernandes_2016
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/REV_HV1H2_Fernandes_2016.csv
+      sha256: 30b996c807938512139313a2969281b416347ce7ec3e48b8e9cd8dc04a0215d3
+    n_single_variants: 2147
+    wt_length: 116
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/REV_HV1H2_Fernandes_2016.a3m
+      sha256: f687aca9d7c4a87ce93ce6f53d8d3acbd3766bed4d77bdb318e748114c24a49d
+      rows: 2158
+      panel: panel5
+  - id: KKA2_KLEPN_Melnikov_2014
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/KKA2_KLEPN_Melnikov_2014.csv
+      sha256: ca0c87984c1aba9f8f2e3976c0956eabf6c57ef0a6e4d73ded35171eeb914437
+    n_single_variants: 4960
+    wt_length: 264
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/KKA2_KLEPN_Melnikov_2014.a3m
+      sha256: bee4438275066502220729f97ef8cb627d9b4f4267f5103c611367c159c64d03
+      rows: 4610
+      panel: panel5
+  - id: BLAT_ECOLX_Deng_2012
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/BLAT_ECOLX_Deng_2012.csv
+      sha256: c7dc7eaf9194a3dcb1a55474502b7dd6ed715df35cf55b1232cc5bc1a08fec2a
+    n_single_variants: 4996
+    wt_length: 286
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/BLAT_ECOLX_Deng_2012.a3m
+      sha256: 930de31ef24eb07cfd413cc14679c2352ddc005eeda54de9cde82019447a3dfe
+      rows: 7718
+      panel: panel5
+  - id: A4GRB6_PSEAI_Chen_2020
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/A4GRB6_PSEAI_Chen_2020.csv
+      sha256: 5a76e81080f9702aeb2f2ce8c31a99c405904f5adc123186f336c379b24d5cf6
+    n_single_variants: 5004
+    wt_length: 266
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/A4GRB6_PSEAI_Chen_2020.a3m
+      sha256: 501b13133a2540823ce4de1792917f53a85999a6c32215ea189b1e346101e73f
+      rows: 3542
+      panel: panel5
+  - id: AMIE_PSEAE_Wrenbeck_2017
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/AMIE_PSEAE_Wrenbeck_2017.csv
+      sha256: 4a0f78f58de43fef84271f7afde01c360286b67e7456e16f88f4aeda253f0419
+    n_single_variants: 6227
+    wt_length: 346
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/AMIE_PSEAE_Wrenbeck_2017.a3m
+      sha256: 8d66f4ea2acf159b7db33a83a1e34e1669aa4aecf07340decb917dc82ee69ea3
+      rows: 2445
+      panel: panel5
+  - id: HEM3_HUMAN_Loggerenberg_2023
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/HEM3_HUMAN_Loggerenberg_2023.csv
+      sha256: 0595215d5507a81c640743231413964505daba227f610b80da96a6b6ad2e7dbe
+    n_single_variants: 5689
+    wt_length: 361
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/HEM3_HUMAN_Loggerenberg_2023.a3m
+      sha256: 7f169c96496d3e19ad068531958ce068b348bf8774a3cc8656de9994457d11fe
+      rows: 20722
+      panel: panel5
+  - id: S22A1_HUMAN_Yee_2023_activity
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/S22A1_HUMAN_Yee_2023_activity.csv
+      sha256: 5b470a590da0b56e05b090b6a7aa4639956096117e562bf45eede43c94149152
+    n_single_variants: 10094
+    wt_length: 553
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/S22A1_HUMAN_Yee_2023_activity.a3m
+      sha256: 6a9208cc224eddac9bcd27b2ad35105c9a93175fb28a54d37563de630de5d91b
+      rows: 10600
+      panel: panel5
+  - id: PAI1_HUMAN_Huttinger_2021
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PAI1_HUMAN_Huttinger_2021.csv
+      sha256: 5e29eb12bf8977c232633897016fea00fa0f4ff61b73d058d1df01b84e1753ac
+    n_single_variants: 5345
+    wt_length: 402
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/PAI1_HUMAN_Huttinger_2021.a3m
+      sha256: 21ba99d7c643fe9085876b023236b74fa781b79b580fa29283af4285f31bd755
+      rows: 10702
+      panel: panel5
+  - id: SHOC2_HUMAN_Kwon_2022
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/SHOC2_HUMAN_Kwon_2022.csv
+      sha256: 36e169325becc6589e6b1f715989f2fd56d51170031a8331479c68ddbbb49d56
+    n_single_variants: 10972
+    wt_length: 582
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/SHOC2_HUMAN_Kwon_2022.a3m
+      sha256: 2cc2d56f888e1fa23294c2e886acb7db7404185da69f5690f403727a1290989c
+      rows: 11005
+      panel: panel5
+  - id: LGK_LIPST_Klesmith_2015
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/LGK_LIPST_Klesmith_2015.csv
+      sha256: 8214039bf1ad2738d45b6d0e1148a5bf82545985e4becd616d139f158dc86fcc
+    n_single_variants: 7890
+    wt_length: 439
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/LGK_LIPST_Klesmith_2015.a3m
+      sha256: f26f35c94a42bd027788ada786a7452c5639e41205d2f2d52e98d15aeef3eaf4
+      rows: 10293
+      panel: panel5
+  - id: NRAM_I33A0_Jiang_2016
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/NRAM_I33A0_Jiang_2016.csv
+      sha256: 302fffb3844af0b72dc707a205953ff29dcd81907432445aeca8d6479ed1ce81
+    n_single_variants: 298
+    wt_length: 453
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/NRAM_I33A0_Jiang_2016.a3m
+      sha256: a1eb3c3655480030e018d9e6b566588d49b7ec6db003e943bdc2270f49e5e9fe
+      rows: 830
+      panel: panel5
+  - id: OXDA_RHOTO_Vanella_2023_expression
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/OXDA_RHOTO_Vanella_2023_expression.csv
+      sha256: 1e4f7bf021723f60c898cc0813eeac9235fcf74bef25e865fafa6cfc4c26c4d8
+    n_single_variants: 6769
+    wt_length: 364
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/OXDA_RHOTO_Vanella_2023_expression.a3m
+      sha256: 699917050fc1d051619b75706cca692ba49698b45d0695494f09a76f32aa6cbd
+      rows: 15515
+      panel: panel5
+  - id: "RPC1_LAMBD_Li_2019_high-expression"
+    assay_csv:
+      path: "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/RPC1_LAMBD_Li_2019_high-expression.csv"
+      sha256: 70b4f6fc6afa07c422bd11c6c9bd48f8f72ae6e8abee9be39c90529931ec2fe6
+    n_single_variants: 351
+    wt_length: 237
+    msa:
+      path: "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/RPC1_LAMBD_Li_2019_high-expression.a3m"
+      sha256: da25243459f4d343022a27b69037af25e6b24dc7f811e9c23a9034b4ed7e67e5
+      rows: 5387
+      panel: panel5
+  - id: RNC_ECOLI_Weeks_2023
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/RNC_ECOLI_Weeks_2023.csv
+      sha256: 49d489104861142d841d152256708c025bc2e72478aa7810d68f6cd5c703985a
+    n_single_variants: 4277
+    wt_length: 226
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/RNC_ECOLI_Weeks_2023.a3m
+      sha256: 040b020a18a1e29871a067d6556223f1b9fa61f8e0a4380aa2e4299c750abaca
+      rows: 15965
+      panel: panel5
+  - id: CCR5_HUMAN_Gill_2023
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/CCR5_HUMAN_Gill_2023.csv
+      sha256: 33f10e7e6552a017318b715ddb6936222375851639cd67093e7269fb1b5f97b3
+    n_single_variants: 6137
+    wt_length: 352
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/CCR5_HUMAN_Gill_2023.a3m
+      sha256: 0330d92901ac0d4ab0e043f284de22d0ca7c6ab830e11142430854e148ee751f
+      rows: 8619
+      panel: panel5
+  - id: OPSD_HUMAN_Wan_2019
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/OPSD_HUMAN_Wan_2019.csv
+      sha256: 926c0afdd6d0c07bf7170710535423c447215b07cccb46eec5dd5b22368d1a8d
+    n_single_variants: 165
+    wt_length: 348
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/OPSD_HUMAN_Wan_2019.a3m
+      sha256: daa0d8adbd63b0289d046656e861fdf8edb60f6ea684878a52aba82c17657a18
+      rows: 8640
+      panel: panel5
+  - id: CP2C9_HUMAN_Amorosi_2021_abundance
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/CP2C9_HUMAN_Amorosi_2021_abundance.csv
+      sha256: 1f4ba7b86e88709783b2e68b04c82fe1f305181c164edfff6391369833ad62ad
+    n_single_variants: 6370
+    wt_length: 490
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/CP2C9_HUMAN_Amorosi_2021_abundance.a3m
+      sha256: e40080eb77da62913f202fe47cd80b2720ac404a251198a9ff9939c2b8a5dda8
+      rows: 15696
+      panel: panel5
+  - id: PPARG_HUMAN_Majithia_2016
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PPARG_HUMAN_Majithia_2016.csv
+      sha256: 807eb7547b62d44d39fb6d22310a6eac54a62ca6768edb46e47de03c93ae642a
+    n_single_variants: 9576
+    wt_length: 505
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/PPARG_HUMAN_Majithia_2016.a3m
+      sha256: a4fab72a4c5fac57fb9e011858740200718e57ec0803edb03d8575c706bcaa0c
+      rows: 11812
+      panel: panel5
+  - id: SC6A4_HUMAN_Young_2021
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/SC6A4_HUMAN_Young_2021.csv
+      sha256: 0ad59ccefda5ac0d808ee39ad873db63e4260b1dc6a463cfc52f16d5d3caf62e
+    n_single_variants: 11576
+    wt_length: 630
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/SC6A4_HUMAN_Young_2021.a3m
+      sha256: 30862baa479975bfa7a93b49bd409d8e49636d0de306b7c8a765dc8b9aa233db
+      rows: 19297
+      panel: panel5
+  - id: "KCNJ2_MOUSE_Coyote-Maestas_2022_function"
+    assay_csv:
+      path: "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/KCNJ2_MOUSE_Coyote-Maestas_2022_function.csv"
+      sha256: 75f07fa60b83f41d92ac42738cc6a3dfc7605cde6605add499efd400f4882b92
+    n_single_variants: 6963
+    wt_length: 428
+    msa:
+      path: "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/KCNJ2_MOUSE_Coyote-Maestas_2022_function.a3m"
+      sha256: 0592bae8e129c6a1db60f2d334aaa7f4e6628a455da3fe208822dcb39c04e544
+      rows: 6826
+      panel: panel5
+  - id: Q59976_STRSQ_Romero_2015
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/Q59976_STRSQ_Romero_2015.csv
+      sha256: ef5b7b8764e079819c0cbf40abe7c83d460d3632831bd688e6b4d68ff5ac4e7e
+    n_single_variants: 2999
+    wt_length: 501
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/Q59976_STRSQ_Romero_2015.a3m
+      sha256: 9070ce52a0151c0c16a0f0969768ac927c60cb0f464af09d607c5165509c255d
+      rows: 21607
+      panel: panel5
+  - id: HXK4_HUMAN_Gersing_2022_activity
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/HXK4_HUMAN_Gersing_2022_activity.csv
+      sha256: 3cb5c29a2bdbc052601e6fc03f7f55ef33c6b0fedee808deff2e8aef79d17b69
+    n_single_variants: 8570
+    wt_length: 465
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/HXK4_HUMAN_Gersing_2022_activity.a3m
+      sha256: 11a31cedd4f4639e8e98e6aa722193bd777caead803655deeba36dd100aa5c76
+      rows: 8809
+      panel: panel5
+  - id: PTEN_HUMAN_Mighell_2018
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PTEN_HUMAN_Mighell_2018.csv
+      sha256: d532bed24c80449936dd61cf303225d78e6e9963a58165c1c36dff92c89557e1
+    n_single_variants: 7260
+    wt_length: 403
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/PTEN_HUMAN_Mighell_2018.a3m
+      sha256: 9d6cfbd62a3cb1d73860cf8a341506c16a08acb31e77d141670f383ee6481e0f
+      rows: 8379
+      panel: panel5
+  - id: ANCSZ_Hobbs_2022
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/ANCSZ_Hobbs_2022.csv
+      sha256: 148830c383a7ce4fb839b2a9e9a402fd168640799303189a438362ebf3c5f164
+    n_single_variants: 4670
+    wt_length: 627
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/ANCSZ_Hobbs_2022.a3m
+      sha256: d60ceb0a475676b3c7cc21fce943393de4c71ba96095f86a845ec69a1cdac739
+      rows: 16954
+      panel: panel5
+  - id: ADRB2_HUMAN_Jones_2020
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/ADRB2_HUMAN_Jones_2020.csv
+      sha256: 905941be7060b3ebf735d868327b34e1b7b9cbd47e87ee251c15e2328643a956
+    n_single_variants: 7800
+    wt_length: 413
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel5/colabfold_output/ADRB2_HUMAN_Jones_2020.a3m
+      sha256: cd5cfd1bf79e8f62b2ea252257151cf6ec6ef6b3b5bbfc8cf56b547cad06cba7
+      rows: 11503
+      panel: panel5

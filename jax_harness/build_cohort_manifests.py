@@ -29,7 +29,7 @@ from pathlib import Path
 
 W = Path("/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files")
 ASSAY_DIR = W / "data/gym/assays/DMS_ProteinGym_substitutions"
-PANELS = ["panel2", "panel", "panel3", "panel4"]
+PANELS = ["panel2", "panel", "panel3", "panel4", "panel5"]
 
 # Cohort -> (the capture glob that has been standing in for it, description)
 COHORTS = {
@@ -80,7 +80,30 @@ STRIP = {"basis_assays": "gym2s_", "heldout_assays": "gym3p3_",
 # at 403 residues boltz2's per-layer z stack is ~5.3 GB and the per-layer
 # distogram ~2.7 GB, which fits an 80 GB H100 but is where the real constraint
 # will show up first. Run PTEN alone before running the cohort.
+def _panel5_ids():
+    """The 29 assays select_panel.py chose, read from the FASTA it wrote.
+
+    Kept as a file read rather than a second hand-maintained list: the panel is
+    already recorded in targets.fasta, and a copy here would be one more place
+    for the two to disagree.
+    """
+    fa = W / "data" / "gym" / "panel5" / "targets.fasta"
+    if not fa.exists():
+        return []
+    return [l[1:].strip() for l in fa.read_text().splitlines()
+            if l.startswith(">")]
+
+
 EXPLICIT = {
+    "panel5_assays": (
+        _panel5_ids(),
+        "The 29-assay ProteinGym expansion panel: a length axis at fixed "
+        "phenotype (fitness, 101-630 aa) and a phenotype axis at matched "
+        "length (fitness / abundance / activity). Chosen by select_panel.py, "
+        "one assay per protein, N_eff >= 1000, soluble-first so membrane-ness "
+        "does not track length. Contains NO stability assays -- ProteinGym has "
+        "none above 100 aa -- so it measures the boundary of the stability "
+        "result rather than confirming it."),
     "length_ladder": (
         ["CCDB_ECOLI_Tripathi_2016",        # 101 aa
          "PHOT_CHLRE_Chen_2023",            # 118 aa
