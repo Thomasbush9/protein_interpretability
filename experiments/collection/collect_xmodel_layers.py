@@ -51,9 +51,15 @@ COHORT = "heldout_assays"
 MODELS = ("boltz2", "of3", "protenix")
 N_VARIANTS = 100          # spread across the sorted score range, as exp_gym_deep does
 
-# Captured for every model. `dz_vec`/`ds_vec` are the DIRECTIONS -- the norms
-# come free from them and the reverse is not true, which is the whole reason the
-# cross-model analysis could be done offline at all.
+# Captured for every model. `dz_vec`/`ds_vec` are the DIRECTIONS; `dz_site`/
+# `ds_site` are their per-layer NORMS, which is what `exp_gym_deep` writes under
+# those names and what every archived xm_* capture holds.
+#
+# That pair is why the reduction below is `both` and not `vector`. It was
+# `vector` first, which declared dz_site to be a (V, L, 128) direction while the
+# kernel wrote a (V, L) norm -- the protocol block contradicting its own arrays,
+# and `require_vectors=True` passing anyway because dz_vec satisfied it. The
+# arrays were never wrong; the declaration was.
 FIELDS = ("dz_vec", "ds_vec", "dz_site", "ds_site", "kl_site", "kl_glob",
           "ca", "plddt_mean", "plddt_site", "score", "pos")
 
@@ -87,7 +93,7 @@ def task_for(model: str, *, layers="all", n_variants=N_VARIANTS,
             model=model,
             fields=FIELDS,
             layers=layers,
-            reduction="vector",
+            reduction="both",      # `_vec` is the direction, `_site` its norm
             recycles=3,
             dtype="float32",
             notes="per-layer trunk capture plus the structure module's own "

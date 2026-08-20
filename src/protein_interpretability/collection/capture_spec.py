@@ -45,7 +45,20 @@ MODEL_LAYERS: dict[str, int | None] = {
     name: capabilities(name).n_trunk_blocks for name in _available()
 }
 
-REDUCTIONS = ("vector", "norm")
+# `both` exists because the cross-model captures store BOTH representations and
+# the type could not say so. `exp_gym_deep` writes `dz_vec` (the direction) and
+# `dz_site` (its per-layer norm) in the same archive -- the arrangement this
+# module's own docstring praises for being readable without guessing -- but
+# `reduction` was a single global setting, so the only expressible declarations
+# were "everything is a vector" or "everything is a norm". Neither is true of
+# that family.
+#
+# The cost of the gap was immediate: the cross-model task declared
+# `reduction="vector"` while listing `dz_site`, so its protocol block promised a
+# (V, L, 128) vector for an array that is (V, L). The arrays were right and the
+# metadata was wrong, which is the deep2_* failure with the sides swapped, and
+# `require_vectors=True` still passed because `dz_vec` satisfied it.
+REDUCTIONS = ("vector", "norm", "both")
 
 # field -> (axes, note). Axes are symbolic:
 #   V variants · L captured layers · C channel width · P sampled pairs
@@ -182,6 +195,20 @@ class CaptureSpec:
                 f"reduction='norm' applies to {sorted(REDUCIBLE)}, and none is "
                 f"captured; the setting would silently do nothing")
 
+        if self.reduction == "both":
+            # `both` is a claim that the archive carries the pair. If only one
+            # side is present the declaration is describing a capture that does
+            # not exist, and the honest spelling is `vector` or `norm`.
+            if not vec_named:
+                raise CaptureSpecError(
+                    f"reduction='both' promises the direction under a `_vec` "
+                    f"field and its norm under `_site`, but {list(self.fields)} "
+                    f"names no `_vec` field. Use reduction='norm'.")
+            if not (set(self.fields) & set(REDUCIBLE)):
+                raise CaptureSpecError(
+                    f"reduction='both' promises a norm under {sorted(REDUCIBLE)} "
+                    f"and none is captured. Use reduction='vector'.")
+
         # Internally coherent is not the same as askable. The registry knows
         # what each wrapper actually emits.
         from protein_interpretability.collection import capabilities as _caps
@@ -210,9 +237,12 @@ class CaptureSpec:
         out = {}
         for name in self.fields:
             axes = FIELDS[name][0]
-            if self.reduction == "norm" and name in REDUCIBLE:
+            if self.reduction in ("norm", "both") and name in REDUCIBLE:
                 # The whole point: a norm drops the channel axis, and the
                 # resulting array is a legal shape for a DIFFERENT quantity.
+                # Under `both` this applies only to the REDUCIBLE `_site`
+                # spellings; the `_vec` fields keep their channel axis, which is
+                # what makes the pair readable.
                 axes = tuple(a for a in axes if a != REDUCIBLE[name])
             out[name] = tuple(dims[a] if isinstance(a, str) else a for a in axes)
         return out
@@ -231,6 +261,58 @@ class CaptureSpec:
         depth = self.n_layers
         return (n_variants * depth * n_tokens * n_tokens * PAIR_WIDTH
                 * DTYPE_BYTES[self.dtype])
+
+    # ---- checking arrays BEFORE they are written ---------------------------
+    def validate_arrays(self, arrays, *, n_variants: int, n_tokens: int,
+                        check_dtype: bool = True) -> None:
+        """Raise unless a dict of arrays matches what this spec promised.
+
+        The same contract as `validate_capture`, applied one step earlier. The
+        difference matters: a capture checked after the write is a capture that
+        already exists on disk for someone to read, and the cross-model runs
+        were writing a protocol block promising a (V, L, 128) vector beside an
+        array that is (V, L). Checking here means the artifact is never created.
+
+        Dtype is checked for the representation fields -- anything with a layer,
+        channel, token, pair or bin axis -- and not for the per-variant columns,
+        because `score` is float64 and `pos` is int64 by nature and neither is
+        governed by the spec's `dtype`.
+        """
+        want = self.expected_shapes(n_variants=n_variants, n_tokens=n_tokens)
+        problems = []
+        for name, shape in want.items():
+            if name not in arrays:
+                problems.append(f"{name}: promised but absent")
+                continue
+            got = tuple(getattr(arrays[name], "shape", ()))
+            if got != shape:
+                extra = ""
+                if name in REDUCIBLE and len(got) == len(shape) - 1:
+                    extra = (" -- this is the NORM where the spec promised the "
+                             "vector, the shape that returned +0.468")
+                elif name in REDUCIBLE and len(got) == len(shape) + 1:
+                    extra = " -- this is the vector where the spec promised a norm"
+                problems.append(f"{name}: {got} but the spec says {shape}{extra}")
+                continue
+            if check_dtype and len(FIELDS[name][0]) >= 2:
+                got_dt = str(getattr(arrays[name], "dtype", ""))
+                if got_dt and got_dt != self.dtype:
+                    problems.append(
+                        f"{name}: dtype {got_dt} but the spec says {self.dtype}")
+        if problems:
+            raise CaptureSpecError(
+                "the arrays about to be written do not match the spec that "
+                "asked for them:\n  " + "\n  ".join(problems))
+
+    def undeclared(self, arrays) -> list[str]:
+        """Arrays present that this spec does not name.
+
+        Not an error -- a capture legitimately carries bookkeeping the spec has
+        no opinion about (`ca_wt`, `capture_drift`, the regime block). But they
+        should be listed in the protocol rather than merely appearing, so a
+        reader can tell a measured field from a provenance column.
+        """
+        return sorted(set(arrays) - set(self.fields))
 
     # ---- checking a written archive ---------------------------------------
     def validate_capture(self, capture, *, n_variants: int, n_tokens: int) -> None:

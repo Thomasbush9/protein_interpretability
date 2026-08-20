@@ -215,6 +215,17 @@ class TrunkAdapter:
             arrays = _select_layers(arrays, resolved, np)
             arrays["layer_index"] = np.asarray(resolved.layers, np.int32)
 
+            # The declaration is checked against the arrays BEFORE the write,
+            # so a spec that promises a vector where the kernel produced a norm
+            # never reaches disk. This is the guard whose absence let the
+            # cross-model task ship a protocol block contradicting its own
+            # arrays; `validate_capture` would have caught it, but it only runs
+            # on an artifact that already exists.
+            n_variants = int(np.asarray(arrays["dz_vec"]).shape[0])
+            task.capture.validate_arrays(
+                arrays, n_variants=n_variants, n_tokens=int(assay.wt_length))
+            undeclared = task.capture.undeclared(arrays)
+
             proto = P.protocol(
                 script="collection.models.trunk.TrunkAdapter",
                 design=f"per-layer trunk capture of {self.name} at the mutated "
@@ -236,6 +247,15 @@ class TrunkAdapter:
                 model_identity=identity.to_dict(),
                 layers_requested=resolved.capture["layers"],
                 layers_resolved=list(resolved.layers),
+                # Named so a reader can tell a declared measurement from a
+                # provenance column, rather than inferring it from the name.
+                undeclared_arrays=undeclared,
+                # The capture declaration at the TOP level, which is where the
+                # vertical slice puts it and where a reader looks for it.
+                # Nesting it inside `resolved_task` recorded it but made
+                # `protocol["reduction"]` a KeyError -- the field whose whole
+                # purpose is to say whether dz_site is a direction or a norm.
+                **{k: v for k, v in resolved.capture.items() if k != "layers"},
                 assay_csv_sha256=assay.assay_csv_sha256,
                 msa_sha256=assay.msa_sha256,
             )
