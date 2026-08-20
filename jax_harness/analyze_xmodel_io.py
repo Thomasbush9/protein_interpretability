@@ -59,6 +59,13 @@ def main():
     ap.add_argument("--dir", required=True)
     ap.add_argument("--run", default="r1", help="xm replicate to use")
     ap.add_argument("--splits", type=int, default=5)
+    ap.add_argument("--ks", default="8,16,32,64",
+                    help="candidate channel counts for the inner tuning grid. "
+                         "The default tops out at 64, so the probe labelled "
+                         "'128-dim' never used more than half its channels and "
+                         "the protocol recorded kept=128, truncated=false. Pass "
+                         "128 for the untruncated probe; the default is kept so "
+                         "the archived xmodel_io_vec.json still reproduces.")
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -67,6 +74,12 @@ def main():
                      for f in glob.glob(f"{a.dir}/xm_boltz2_{a.run}_*.npz")})
     print(f"{len(assays)} assays x {len(MODELS)} models, replicate {a.run}\n")
 
+    KS = tuple(int(x) for x in a.ks.split(",") if x.strip())
+    WIDTH = 128
+    INTERNAL = (f"internal ({max(KS)}-of-{WIDTH} ch, final layer)"
+                if max(KS) < WIDTH else
+                f"internal (all {WIDTH} ch, final layer)")
+    chosen = defaultdict(list)
     per = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     nlay, drift, ref_mut = {}, {}, {}
     for asy in assays:
@@ -100,25 +113,37 @@ def main():
                 tr, te = grouped_split(pos, 0.25, rng)
                 if te.sum() < 8 or tr.sum() < 20:
                     continue
-                rho = fit_ridge_block(z[:, -1, :], y, pos, tr, te, rng)[0]
-                per[m]["internal (128-dim, final layer)"][asy].append(rho)
+                rho, k_used, lam_used, _ = fit_ridge_block(
+                    z[:, -1, :], y, pos, tr, te, rng, ks=KS)
+                # The chosen k was previously discarded, which is why nothing
+                # noticed the probe was truncated: the number came back, the
+                # label said 128, and the evidence to the contrary was thrown
+                # away at the call site.
+                chosen[m].append(int(k_used))
+                per[m][INTERNAL][asy].append(rho)
                 per[m]["pLDDT"][asy].append(pi_stats.spearman(pl[te], y[te]))
                 per[m]["pLDDT@site"][asy].append(pi_stats.spearman(pls[te], y[te]))
 
-    ORDER = ["internal (128-dim, final layer)", "pLDDT", "pLDDT@site"]
+    ORDER = [INTERNAL, "pLDDT", "pLDDT@site"]
     print(f"Spearman vs measured stability, held-out positions "
           f"({len(assays)} assays x {a.splits} splits)\n")
     print(f"{'model':10s}{'layers':>7s}" + "".join(f"{k:>34s}" for k in ORDER))
     out = {"models": list(MODELS), "assays": assays, "splits": a.splits,
            "run": a.run, "layers": {m: int(nlay[m]) for m in MODELS},
            "capture_drift": drift, "order": ORDER,
-           "spearman": {}, "internal_minus": {}}
+           "spearman": {}, "per_assay": {}, "internal_minus": {}}
     for m in MODELS:
         row = ""
         out["spearman"][m] = {}
+        out["per_assay"][m] = {}
         for k in ORDER:
             flat = np.concatenate([np.asarray(v) for v in per[m][k].values()])
             out["spearman"][m][k] = float(np.nanmean(flat))
+            # Per-assay means as well as the pooled one: the assay is the
+            # independent unit, so a reader checking this result needs to see
+            # the sixteen values the interval is over, not only their average.
+            out["per_assay"][m][k] = {
+                asy: float(np.nanmean(v)) for asy, v in per[m][k].items()}
             row += f"{np.nanmean(flat):>+34.3f}"
         print(f"{m:10s}{nlay[m]:>7d}{row}")
 
@@ -149,7 +174,18 @@ def main():
         script="analyze_xmodel_io.py",
         design="within-assay, position-grouped splits; paired WITHIN model",
         layer=pi_protocol.layers("final"),
-        features=pi_protocol.features("dz_vec, final-layer pair row", 128),
+        # `kept` is the channel count the probe ACTUALLY used, not the width of
+        # the block it was drawn from. Recording 128/128 while the inner grid
+        # topped out at 64 is the failure pi_protocol was written for -- "the
+        # distinction that made a 128-channel probe read as 0.696 while its
+        # label said 128".
+        features=pi_protocol.features(
+            "dz_vec, final-layer pair row", 128, kept=max(KS),
+            note=f"inner tuning grid ks={list(KS)}; k selected per split by "
+                 f"select_k on the training rows"),
+        k_grid=list(KS),
+        k_chosen={m: sorted(set(chosen[m])) for m in MODELS if chosen[m]},
+        k_chosen_median={m: int(np.median(chosen[m])) for m in MODELS if chosen[m]},
         source=f"{a.dir}/xm_<model>_{a.run}_<assay>.npz", n_assays=len(assays),
         note="TM omitted: tmtools is not installed and substituting another "
              "metric under that name would fabricate a number")
