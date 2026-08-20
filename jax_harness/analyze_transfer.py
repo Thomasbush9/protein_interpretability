@@ -94,30 +94,39 @@ def main():
     A = {}
     for f in a.features:
         d = pi_archive.load_capture(f)
-        # `.replace("gym2_", "")` silently collapsed every gym2s_* file to the
-        # single key "gym2s", leaving one assay in the dict. Split on position.
-        name = Path(f).stem.split("_")[1]
+        # THE ASSAY, NOT THE FILENAME. `Path(f).stem.split("_")[1]` reads the
+        # second underscore field, which is the assay for `gym2s_<assay>` and
+        # the MODEL for `xm_<model>_<run>_<assay>` -- so pointing this script at
+        # the cross-model family gave three files all keyed "boltz2". The xm
+        # captures record their assay; a filename is not evidence when the
+        # array is right there.
+        assay = (str(d["assay"]) if "assay" in d
+                 else Path(f).stem.split("_", 1)[1])
+        name = assay.split("_")[0]
         y = d["score"]
         ca, ca_wt = d["ca"], d["ca_wt"]
-        seq = str(d["wt_seq"])
         # TM comes from the cache: tmtools lives in the repo venv and JAX in
         # the container, and neither has the other. Recomputing it here would
         # simply fail; dropping it would weaken the output baseline, which is
         # the wrong direction to be sloppy in.
-        stem = Path(f).stem.split("_", 1)[1]
-        if stem not in TM:
-            raise SystemExit(f"{stem}: not in {a.tm_cache}; run precompute_tm.py")
-        tm = np.asarray(TM[stem], float)
+        if assay not in TM:
+            raise SystemExit(f"{assay}: not in {a.tm_cache}; run precompute_tm.py")
+        tm = np.asarray(TM[assay], float)
         # RAW blocks are kept alongside the z-scored ones. The published
         # protocol scales every assay by its own statistics, which is
         # unsupervised but transductive -- the held-out assay's rows decide its
         # own scale. `--inductive` instead scales it with the training assays'
         # statistics, so nothing about the held-out protein enters the fit.
         raw = {
+            # `magnitudes` rather than an explicit norm on `ds_site`. Both
+            # give (n, L) for gym2s, where ds_site is (n, L, 384) -- but in the
+            # xm family ds_site is ALREADY the per-layer norm, and taking a norm
+            # of it again collapses the layer axis to (n,). The accessor asks
+            # the array what it is instead of assuming.
             "internal": np.concatenate(
                 [d["kl_glob"], d["kl_site"],
-                 d.magnitudes(),
-                 np.linalg.norm(d["ds_site"], axis=-1)], axis=1),
+                 d.magnitudes("dz"),
+                 d.magnitudes("ds")], axis=1),
             # The 128 pair channels at the final layer -- the DIRECTION, not
             # just how far the row moved. `internal` above feeds dz_site in as
             # a per-layer norm, which is a defensible shared feature space but
@@ -126,10 +135,16 @@ def main():
             # within-assay figures reported elsewhere. The channels mean the
             # same thing in every protein (that is the shared-subspace result),
             # so pooling them across assays is well defined.
-            "internal_vec": np.asarray(d["dz_site"], float)[:, -1, :],
+            # `pair_row` finds the DIRECTION wherever the family keeps it --
+            # `dz_vec` in xm, `dz_site` in gym2s -- and raises on an archive
+            # that holds only norms rather than quietly returning them.
+            "internal_vec": d.pair_row(-1),
             "chemistry": pi_chem.chem_matrix([str(m) for m in d["mutant"]]),
+            # Two families, two spellings of the chain mean.
             "output_rich": output_matrix(
-                ca, ca_wt, tm, d["plddt"], d["plddt_site"], d["pos"]),
+                ca, ca_wt, tm,
+                d["plddt"] if "plddt" in d else d["plddt_mean"],
+                d["plddt_site"], d["pos"]),
         }
         A[name] = {"y": y, "pos": d["pos"], "yz": zscore(y), "tm": tm,
                    "raw": raw, **{k: zscore(v) for k, v in raw.items()}}

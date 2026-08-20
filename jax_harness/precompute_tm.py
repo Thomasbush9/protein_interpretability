@@ -34,13 +34,21 @@ def main():
     ap = argparse.ArgumentParser()
     R = "/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/"
     ap.add_argument("--glob", default=R + "runs/gym2s_*.npz")
+    ap.add_argument("--prefix", default="gym2s_",
+                    help="filename prefix to strip when keying the cache. The "
+                         "key must be the ASSAY id, because that is what the "
+                         "consumer looks up -- and the cross-model family is "
+                         "named xm_<model>_<run>_<assay>, not <prefix><assay>.")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
     t0, out = time.time(), {}
     for f in sorted(glob.glob(a.glob)):
-        stem = Path(f).stem[len("gym2s_"):]
         d = np.load(f, allow_pickle=True)
+        # Prefer the assay the capture RECORDS over the one its name implies;
+        # the xm family carries it, and a filename is not evidence.
+        stem = (str(d["assay"]) if "assay" in d.files
+                else Path(f).stem[len(a.prefix):])
         ca_wt = np.asarray(d["ca_wt"], float)
         tm = np.array([geom.tm_score(np.asarray(c, float), ca_wt)
                        for c in d["ca"]])
