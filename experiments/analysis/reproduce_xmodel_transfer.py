@@ -66,11 +66,27 @@ LAM = 10.0
 TOL = 1e-6
 
 
-def load_blocks(model, cohort, captures, tm_cache, run="r1"):
+def complete_assays(cohort, captures, models, run="r1"):
+    """Assays captured in EVERY model. The paired comparison needs all three.
+
+    A cross-model gap computed over different assay sets per model is not a
+    paired comparison, so the intersection is taken once, here, and the
+    difference is returned rather than discovered per model.
+    """
+    ok, missing = [], {}
+    for assay in cohort:
+        absent = [m for m in models
+                  if not (Path(captures) / f"xm_{m}_{run}_{assay.id}.npz").exists()]
+        (ok.append(assay) if not absent
+         else missing.setdefault(assay.id, absent))
+    return ok, missing
+
+
+def load_blocks(model, assays, captures, tm_cache, run="r1"):
     """One entry per assay: the internal vectors, the emitted features, the score."""
     TM = np.load(tm_cache)
     internal, output, target = {}, {}, {}
-    for assay in cohort:
+    for assay in assays:
         path = Path(captures) / f"xm_{model}_{run}_{assay.id}.npz"
         if not path.exists():
             raise SystemExit(f"missing {path.name}; collect it before analysing")
@@ -91,9 +107,10 @@ def load_blocks(model, cohort, captures, tm_cache, run="r1"):
     return internal, output, target
 
 
-def run_model(model, a, cohort):
+def run_model(model, a, assays):
     internal, output, target = load_blocks(
-        model, cohort, a.captures, W / "runs" / f"tm_heldout16_{model}.npz")
+        model, assays, a.captures,
+        Path(a.tm_cache.format(model=model)))
     names = sorted(internal)
 
     # Leave one assay out, twice: once on the trunk, once on what was emitted.
@@ -108,27 +125,28 @@ def run_model(model, a, cohort):
     mean_int = float(np.mean([rho_int[k] for k in names]))
     mean_out = float(np.mean([rho_out[k] for k in names]))
 
+    # Which assays measure folding stability, from the assay ids themselves.
+    # For panel5 this is empty by construction -- ProteinGym has no stability
+    # assay above 100 residues -- and the split below simply does not print.
+    stability = {x.id.split("_")[0]: "Tsuboyama_2023" in x.id for x in assays}
     print(f"\n=== {model}  ({len(names)} assays, "
           f"{internal[names[0]].shape[1]} channels, lam={a.lam:g}) ===")
-    print(f"{'assay':9s} {'internal':>9s} {'emitted':>9s} {'gap':>9s}  phenotype")
-    stability = {x.id.split("_")[0]: "Tsuboyama_2023" in x.id for x in cohort}
+    print(f"{'assay':9s} {'internal':>9s} {'emitted':>9s} {'gap':>9s}")
     for k in sorted(names, key=lambda n: -gaps[n]):
-        print(f"{k:9s} {rho_int[k]:>+9.3f} {rho_out[k]:>+9.3f} {gaps[k]:>+9.3f}"
-              f"  {'stability' if stability[k] else 'OTHER'}")
+        print(f"{k:9s} {rho_int[k]:>+9.3f} {rho_out[k]:>+9.3f} {gaps[k]:>+9.3f}")
     print(f"{'mean':9s} {mean_int:>+9.3f} {mean_out:>+9.3f} "
           f"{np.mean(list(gaps.values())):>+9.3f}")
 
     # The phenotype split: the whole of Boltz-2's fall from +0.758 is here.
-    s = [rho_int[k] for k in names if stability[k]]
-    o = [rho_int[k] for k in names if not stability[k]]
+    s = [rho_int[k] for k in names if stability.get(k)]
+    o = [rho_int[k] for k in names if not stability.get(k, True)]
     if s and o:
-        print(f"  internal on stability  {np.mean(s):+.3f}  (n={len(s)})")
-        print(f"  internal on other      {np.mean(o):+.3f}  (n={len(o)})"
-              f"   <- the four from other labs")
+        print(f"  internal on stability      {np.mean(s):+.3f}  (n={len(s)})")
+        print(f"  internal on other phenotype {np.mean(o):+.3f}  (n={len(o)})")
 
     # Check against the archived producer, per assay and pooled.
-    ref_path = W / "runs" / f"transfer_heldout16_{model}.json"
-    if ref_path.exists():
+    ref_path = Path(a.reference.format(model=model)) if a.reference else None
+    if ref_path is not None and ref_path.exists():
         ref = json.loads(ref_path.read_text())["predictors"]
         worst = max(abs(rho_int[k] - v)
                     for k, v in ref["internal_vec"]["per_assay"].items())
@@ -147,13 +165,28 @@ def main() -> int:
     ap.add_argument("--cohort", default="heldout_assays")
     ap.add_argument("--captures", default=str(W / "runs" / "xmodel_layers"))
     ap.add_argument("--lam", type=float, default=LAM)
+    ap.add_argument("--reference",
+                    default=str(W / "runs" / "transfer_heldout16_{model}.json"),
+                    help="archived producer output to check against; pass an "
+                         "empty string when analysing a cohort that has none")
+    ap.add_argument("--tm-cache", default=str(W / "runs" / "tm_heldout16_{model}.npz"),
+                    help="per-model TM cache; TM comes from each model's OWN "
+                         "coordinates, so one cache cannot serve another model")
     a = ap.parse_args()
 
     cohort = Cohort.load(a.cohort)
     cohort.verify()
+    assays, missing = complete_assays(cohort, a.captures, MODELS)
     print(f"{cohort.name}: {len(cohort)} assays, inputs verified")
+    if missing:
+        print(f"\n  EXCLUDED {len(missing)} assay(s) not captured in every "
+              f"model -- the comparison is paired, so a partial one cannot "
+              f"enter it:")
+        for k, v in sorted(missing.items()):
+            print(f"    {k:44s} missing {', '.join(v)}")
+        print(f"  analysing {len(assays)} of {len(cohort)}")
 
-    ok = all(run_model(m, a, cohort) for m in (MODELS if a.all else [a.model]))
+    ok = all(run_model(m, a, assays) for m in (MODELS if a.all else [a.model]))
     print("\nreproduced to within 1e-6" if ok else
           "\nMISMATCH -- this recipe no longer produces the archived numbers")
     return 0 if ok else 1
