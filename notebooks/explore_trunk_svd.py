@@ -19,23 +19,22 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # Inside the trunk
+    mo.md("""
+    # Inside the trunk
 
-        Boltz-2's internal state predicts mutational stability far better than
-        anything it emits. This notebook walks the evidence for that, from a raw
-        capture to the shared direction the report is built on.
+    Boltz-2's internal state predicts mutational stability far better than
+    anything it emits. This notebook walks the evidence for that, from a raw
+    capture to the shared direction the report is built on.
 
-        Nothing here loads a model. Every representation was collected on a GPU
-        node; this reads the archives.
-        """
-    )
+    Nothing here loads a model. Every representation was collected on a GPU
+    node; this reads the archives.
+    """)
     return
 
 
@@ -115,7 +114,7 @@ def _(RUNS, artifacts, assay_pick, mo, np):
         {np.abs(dz).max():.1f}.
         """
     )
-    return cap, dz, mutants, n_layers, n_var, score, width
+    return cap, dz, n_layers, score
 
 
 @app.cell
@@ -202,19 +201,17 @@ def _():
         ax.tick_params(colors=MUTED, labelsize=9, length=0)
         return fig, ax
 
-    return INK, MUTED, SERIES_1, SERIES_2, axes, plt
+    return INK, MUTED, SERIES_1, SERIES_2, axes
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Where in the trunk does the signal live?
+    mo.md("""
+    ## Where in the trunk does the signal live?
 
-        At each Pairformer layer, how well does the size of the representation's
-        movement track the measured stability effect? One number per layer.
-        """
-    )
+    At each Pairformer layer, how well does the size of the representation's
+    movement track the measured stability effect? One number per layer.
+    """)
     return
 
 
@@ -254,42 +251,38 @@ def _(INK, MUTED, SERIES_1, axes, dz, n_layers, np, score, st):
 
 @app.cell
 def _(assay_pick, mo, n_layers, peak, trace):
-    mo.md(
-        f"""
-        For **{assay_pick.value}** the correlation is strongest at layer
-        **{peak}** of {n_layers}, at {trace[peak]:+.3f}. It sits near
-        {trace[:len(trace) // 2].mean():+.2f} through the first half and
-        strengthens late — which is why the report reads the pair row at the
-        **final** layer rather than averaging the trunk.
+    mo.md(f"""
+    For **{assay_pick.value}** the correlation is strongest at layer
+    **{peak}** of {n_layers}, at {trace[peak]:+.3f}. It sits near
+    {trace[:len(trace) // 2].mean():+.2f} through the first half and
+    strengthens late — which is why the report reads the pair row at the
+    **final** layer rather than averaging the trunk.
 
-        The sign is negative because a larger movement means a more destabilising
-        mutation, and the assay scores destabilisation as negative.
+    The sign is negative because a larger movement means a more destabilising
+    mutation, and the assay scores destabilisation as negative.
 
-        Note this is a **magnitude** — it asks *where* the signal is, not *which
-        direction* carries it. The direction is the next section, and it is where
-        the result actually comes from.
-        """
-    )
+    Note this is a **magnitude** — it asks *where* the signal is, not *which
+    direction* carries it. The direction is the next section, and it is where
+    the result actually comes from.
+    """)
     return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## The shared basis
+    mo.md("""
+    ## The shared basis
 
-        Each assay is a different protein, yet the 128 pair channels mean the
-        same thing in all of them. That is the claim worth testing, and the test
-        is whether one decomposition fitted across every assay carries signal in
-        each — not whether the reconstruction error is small.
+    Each assay is a different protein, yet the 128 pair channels mean the
+    same thing in all of them. That is the claim worth testing, and the test
+    is whether one decomposition fitted across every assay carries signal in
+    each — not whether the reconstruction error is small.
 
-        Per-assay z-score, pool, subtract the pooled mean, SVD. The sign of each
-        leading component is then fixed against a reference quantity, because an
-        SVD determines a direction only up to sign, and "PC2" means nothing until
-        that is pinned.
-        """
-    )
+    Per-assay z-score, pool, subtract the pooled mean, SVD. The sign of each
+    leading component is then fixed against a reference quantity, because an
+    SVD determines a direction only up to sign, and "PC2" means nothing until
+    that is pinned.
+    """)
     return
 
 
@@ -309,7 +302,7 @@ def _(RUNS, artifacts, cohort, np):
         orient_on="kl_glob", orient_ref=orient_ref, orient_k=2,
         n_boot=2000, seed=0,
     )
-    return basis_mod, blocks, orient_ref, shared
+    return blocks, shared
 
 
 @app.cell
@@ -340,22 +333,20 @@ def _(MUTED, SERIES_1, axes, np, shared):
 
 @app.cell
 def _(ev, mo, np):
-    mo.md(
-        f"""
-        PC1 takes {ev[0]:.1%} and PC2 {ev[1]:.1%}; the first eight together
-        reach {np.cumsum(ev)[7]:.1%}. **PC2 is the one the report is about** —
-        PC1 tracks substitution volume and PC3 hydropathy, neither of which is
-        the stability axis. That is why the causal experiment steers PC2 and
-        uses PC1 and PC3 as controls: if all components behaved alike, the
-        effect would be about perturbation size rather than about this
-        direction.
-        """
-    )
+    mo.md(f"""
+    PC1 takes {ev[0]:.1%} and PC2 {ev[1]:.1%}; the first eight together
+    reach {np.cumsum(ev)[7]:.1%}. **PC2 is the one the report is about** —
+    PC1 tracks substitution volume and PC3 hydropathy, neither of which is
+    the stability axis. That is why the causal experiment steers PC2 and
+    uses PC1 and PC3 as controls: if all components behaved alike, the
+    effect would be about perturbation size rather than about this
+    direction.
+    """)
     return
 
 
 @app.cell
-def _(INK, MUTED, SERIES_1, artifacts, assay_pick, axes, np, RUNS, shared, st):
+def _(INK, MUTED, RUNS, SERIES_1, artifacts, assay_pick, axes, np, shared, st):
     _cap = artifacts.load_capture(RUNS / f"gym2s_{assay_pick.value}.npz")
     _dz = np.asarray(_cap.field("dz_site"), float)
     _y = np.asarray(_cap.field("score"), float)
@@ -376,29 +367,28 @@ def _(INK, MUTED, SERIES_1, artifacts, assay_pick, axes, np, RUNS, shared, st):
                transform=ax_pc.transAxes, color=INK, fontsize=9)
     fig_pc.tight_layout()
     fig_pc
-    return pc, pc2, rho_pc2
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## The headline
+    mo.md("""
+    ## The headline
 
-        Everything above looked at one assay at a time. The claim in the report
-        is stronger: fit on eleven proteins, test on the twelfth, and the probe
-        still works — so the direction is not a per-protein artefact.
+    Everything above looked at one assay at a time. The claim in the report
+    is stronger: fit on eleven proteins, test on the twelfth, and the probe
+    still works — so the direction is not a per-protein artefact.
 
-        This is the +0.758 the report opens with, recomputed here from the same
-        captures.
-        """
-    )
+    This is the +0.758 the report opens with, recomputed here from the same
+    captures.
+    """)
     return
 
 
 @app.cell
 def _():
     from protein_interpretability.analysis.probes import leave_one_group_out
+
     return (leave_one_group_out,)
 
 
@@ -418,7 +408,7 @@ def _(RUNS, artifacts, blocks, cohort, leave_one_group_out, np):
 
     per_assay = leave_one_group_out(probe_blocks, lam=10.0)
     pooled = float(np.mean(list(per_assay.values())))
-    return per_assay, pooled, probe_blocks
+    return per_assay, pooled
 
 
 @app.cell
@@ -447,64 +437,65 @@ def _(INK, MUTED, SERIES_1, SERIES_2, axes, np, per_assay, pooled):
                    color=INK, fontsize=9)
     fig_hl.tight_layout()
     fig_hl
-    return names, vals
+    return
 
 
 @app.cell
 def _(mo, per_assay, pooled):
-    mo.md(
-        f"""
-        **{pooled:+.6f}** across {len(per_assay)} held-out assays — the figure
-        the report quotes as +0.758, from the recipe in
-        `experiments/analysis/reproduce_headline_transfer.py`: final-layer
-        `dz_site`, z-scored within assay, leave-one-assay-out ridge at λ=10.
+    mo.md(f"""
+    **{pooled:+.6f}** across {len(per_assay)} held-out assays — the figure
+    the report quotes as +0.758, from the recipe in
+    `experiments/analysis/reproduce_headline_transfer.py`: final-layer
+    `dz_site`, z-scored within assay, leave-one-assay-out ridge at λ=10.
 
-        The spread matters as much as the mean. The weakest assay is
-        {min(per_assay, key=per_assay.get)} at
-        {min(per_assay.values()):+.3f} and the strongest
-        {max(per_assay, key=per_assay.get)} at {max(per_assay.values()):+.3f};
-        a mean over twelve proteins with that spread is a different claim from
-        a single number on one.
-        """
-    )
+    The spread matters as much as the mean. The weakest assay is
+    {min(per_assay, key=per_assay.get)} at
+    {min(per_assay.values()):+.3f} and the strongest
+    {max(per_assay, key=per_assay.get)} at {max(per_assay.values()):+.3f};
+    a mean over twelve proteins with that spread is a different claim from
+    a single number on one.
+    """)
     return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Going further
+    mo.md("""
+    ## Going further
 
-        Everything here reads artifacts. To collect new ones you need a GPU node,
-        and the job is rendered before it is queued:
+    Everything here reads artifacts. To collect new ones you need a GPU node,
+    and the job is rendered before it is queued:
 
-        ```bash
-        # what would run, resolved from the site profile — loads nothing
-        uv run pi render --checkout collect_pairformer_layers.py
+    ```bash
+    # what would run, resolved from the site profile — loads nothing
+    uv run pi render --checkout collect_pairformer_layers.py
 
-        # the capture itself
-        sbatch jax_harness/checkout.sbatch \\
-            ../experiments/collection/collect_pairformer_layers.py \\
-            --n-variants 8 --out $W/runs/mine.npz
-        ```
+    # the capture itself
+    sbatch jax_harness/checkout.sbatch \
+        ../experiments/collection/collect_pairformer_layers.py \
+        --n-variants 8 --out $W/runs/mine.npz
+    ```
 
-        Two things worth knowing before comparing anything you collect against
-        an archive:
+    Two things worth knowing before comparing anything you collect against
+    an archive:
 
-        - `dz_site` agrees across jobs to about **1%**, not exactly, and some
-          variants are far more sensitive than others — one sampled assay ranged
-          from 0.2% to 5.4% between two runs of identical code. Comparing
-          captures against zero will always fail.
-        - The same field name means different things in different archives:
-          a 128-channel **vector** here, a per-layer **norm** in the cross-model
-          captures. `load_capture` checks the array's rank rather than trusting
-          the name, and `CaptureSpec` states which one a run promised.
+    - `dz_site` agrees across jobs to about **1%**, not exactly, and some
+      variants are far more sensitive than others — one sampled assay ranged
+      from 0.2% to 5.4% between two runs of identical code. Comparing
+      captures against zero will always fail.
+    - The same field name means different things in different archives:
+      a 128-channel **vector** here, a per-layer **norm** in the cross-model
+      captures. `load_capture` checks the array's rank rather than trusting
+      the name, and `CaptureSpec` states which one a run promised.
 
-        `docs/API.md` is the guide; `pi reproduce` replays any archived result
-        from the command it recorded.
-        """
-    )
+    `docs/API.md` is the guide; `pi reproduce` replays any archived result
+    from the command it recorded.
+    """)
+    return
+
+
+@app.cell
+def _():
     return
 
 
