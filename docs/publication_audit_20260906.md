@@ -1,5 +1,20 @@
 # Publication audit and finishing plan
 
+> **Follow-up correction — this is the original audit, not the current acceptance checklist.**
+> The subsequent [audit response](../../prot_interp_files/audit_response_20260906/REPORT.md)
+> and [claim ledger](../../prot_interp_files/audit_response_20260906/CLAIM_LEDGER.md)
+> supersede resolved findings and proposed gates below. I withdraw the OpenFold3
+> per-atom pLDDT finding: the wrapper already returned per-token confidence; my
+> premise came from stale documentation, not an error in the captures. The
+> unaligned 12–24 Å coordinate comparison is also not evidence of degenerate
+> structures; the separate question of poor aligned archived Boltz-2 structures
+> remains open. The follow-up reports a residual internal-versus-four-draw-output
+> gap on eight Boltz-2 assays, frozen-PC2 transfer concentrated in stability
+> assays, and incremental prediction beyond the specified chemistry/MSA/burial
+> baseline. These strengthen the observational case. The old steering
+> significance is withdrawn, and the existing natural-mutation ablation is
+> negative; neither establishes a selective stability-control mechanism.
+
 ## Verdict
 
 **Yes: this is worth writing up. The strongest paper is about experimentally anchored, transferable mutation-effect decodability in frozen folding-model representations—not a general claim that folding models ignore mutations, a new state-of-the-art stability predictor, or a demonstrated thermodynamic mechanism.**
