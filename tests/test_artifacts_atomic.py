@@ -153,3 +153,41 @@ def test_require_meta_is_satisfied_by_a_sidecar(tmp_path):
     np.savez_compressed(raw, a=np.arange(3))
     artifacts.write_capture_sidecar(raw)
     artifacts.load_capture(raw, require_meta=True)
+
+
+# ---- provenance can say "clean", not only "dirty" or "unknown" -------------
+
+def test_clean_checkout_records_git_dirty_false_not_none():
+    """`git status --porcelain` prints nothing for a clean tree.
+
+    Folding that empty output into None made a clean checkout look exactly
+    like a git that would not run, so the flag that attests the code was the
+    committed code could never say so. Found while regenerating the audit's
+    clean artifact release, where every rerun recorded git_dirty: null.
+    """
+    from protein_interpretability import artifacts
+
+    ok, _ = artifacts._git_run("rev-parse", "HEAD")
+    if not ok:
+        import pytest
+        pytest.skip("not a git checkout here")
+
+    prov = artifacts.run_provenance()
+    assert prov["git_commit"], "a checkout must record its commit"
+    assert prov["git_dirty"] in (True, False), (
+        f"git_dirty is {prov['git_dirty']!r}; a readable checkout must report "
+        "a boolean, since None cannot be told from a failed git")
+
+
+def test_git_run_reports_empty_output_as_success():
+    from protein_interpretability import artifacts
+
+    ok, out = artifacts._git_run("rev-parse", "HEAD")
+    if not ok:
+        import pytest
+        pytest.skip("not a git checkout here")
+    # An empty-but-successful command is success with empty text, never a
+    # None that a caller would read as failure.
+    ok2, out2 = artifacts._git_run("status", "--porcelain")
+    assert ok2 is True
+    assert isinstance(out2, str)

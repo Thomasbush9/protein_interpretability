@@ -93,15 +93,35 @@ def _git_root():
 
 
 def _git(*args, cwd=None):
+    """Trimmed stdout, or None if the command could not be run.
+
+    Collapses "empty output" into None, which is right for `rev-parse` and
+    wrong for anything whose empty output is meaningful. Use `_git_run` when
+    the difference matters -- see `run_provenance`.
+    """
+    ok, out = _git_run(*args, cwd=cwd)
+    return out or None if ok else None
+
+
+def _git_run(*args, cwd=None):
+    """(ran_successfully, trimmed stdout). Empty output is not failure.
+
+    `git status --porcelain` prints NOTHING for a clean tree, so folding its
+    empty output into None -- as `_git` does -- made a clean checkout
+    indistinguishable from a git that would not run, and every archive
+    produced from a clean checkout recorded `git_dirty: null`. That is the
+    silent None this module exists to prevent, in the field that says whether
+    the code was the committed code.
+    """
     root = cwd or _git_root()
     if root is None:
-        return None
+        return False, ""
     try:
-        return subprocess.run(["git", *args], cwd=str(root),
-                              capture_output=True, text=True,
-                              timeout=15).stdout.strip() or None
+        r = subprocess.run(["git", *args], cwd=str(root), capture_output=True,
+                           text=True, timeout=15)
+        return r.returncode == 0, r.stdout.strip()
     except Exception:
-        return None
+        return False, ""
 
 
 def run_provenance():
@@ -111,14 +131,15 @@ def run_provenance():
     is; argv says what was actually asked of it, which is the axis five
     verification runs drifted on in a single afternoon.
     """
-    dirty = _git("status", "--porcelain")
+    ran, dirty = _git_run("status", "--porcelain")
     return {
         "written_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "argv": list(sys.argv),
         "cwd": os.getcwd(),
         "git_commit": _git("rev-parse", "HEAD"),
         "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
-        "git_dirty": bool(dirty) if dirty is not None else None,
+        # False means "checked, and the tree was clean" -- not "unknown".
+        "git_dirty": bool(dirty) if ran else None,
         "git_root": str(_git_root() or ""),
         "mirrored": not str(HERE).startswith(str(REPO)),
         "host": socket.gethostname(),
