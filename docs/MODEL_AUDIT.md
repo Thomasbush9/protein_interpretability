@@ -32,10 +32,16 @@ entry here is a correction:
   residue length, two independent implementations agree residue-wise at
   r = 0.96–0.99, and per-site values show the terminal-dip signature. All
   three wrappers therefore emit comparable per-token pLDDT on [0,1]. One known
-  residual asymmetry: Protenix expectations use bin *edges* (`linspace(0,1,50)`)
-  where the others use bin *centres*, inflating its pLDDT by ~+0.008–0.01 at
-  the high end — irrelevant to within-model analyses, visible only where the
-  three share an absolute-pLDDT axis.
+  residual asymmetry: Protenix takes its expectation over bin *edges*
+  (`losses/protenix.py`, `linspace(0,1,50)`, spacing 1/49) where OpenFold3 uses
+  bin *centres* (`losses/of3.py`, spacing 1/50), inflating Protenix's pLDDT by
+  ~+0.008–0.01 at the high end — irrelevant to within-model analyses, visible
+  only where the three share an absolute-pLDDT axis. **Boltz-2's convention is
+  not established here**: joltz passes its own `confidence.plddt` through
+  unchanged and lives only inside `mosaic.sif`, so it was inferred per-token on
+  [0,1] from the archives rather than read from source. Reading it needs a job
+  allocation, and until then it is recorded as unverified rather than assumed
+  to match either of the others.
 - **Distogram grids.** Only Boltz-2's is recorded here. A KL computed across two
   different distance grids is a well-formed number that means nothing, so
   cross-model comparisons go through `records.assert_comparable`, which checks
