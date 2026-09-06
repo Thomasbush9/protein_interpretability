@@ -29,7 +29,7 @@
 # mixed models can still ask for what its slowest member needs.
 set -euo pipefail
 
-SETUP=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/mosaic_setup
+SETUP=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/binder_design/mosaic_setup
 REPO=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability
 
 MANIFEST=${1:?usage: sbatch --array=1-N%10 checkout_array.sbatch MANIFEST}
@@ -41,7 +41,7 @@ if [ -z "$LINE" ]; then
     exit 2
 fi
 
-export MOSAIC_SIF=$SETUP/images/mosaic.sif
+export MOSAIC_SIF=$SETUP/../images/mosaic.sif
 export MOSAIC_WEIGHTS=$SETUP/weights
 export MOSAIC_SCRATCH=/n/netscratch/bsabatini_lab/Everyone/$USER/mosaic
 

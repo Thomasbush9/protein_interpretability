@@ -24,7 +24,9 @@ roots:
   # ${VAR} expands from the environment; ${VAR:-default} falls back.
   work: ${PROT_INTERP_WORK:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files}
   repo: ${PROT_INTERP_REPO:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_interpretability}
-  setup: ${MOSAIC_SETUP:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/mosaic_setup}
+  # moved 2026-09: mosaic_setup now lives inside binder_design/, and the image
+  # sits beside it at binder_design/images/ rather than under it.
+  setup: ${MOSAIC_SETUP:-/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/binder_design/mosaic_setup}
   # Job-local scratch. $TMPDIR is per-job on this cluster; the fallback is only
   # for a login-node dry run, where nothing is written anyway.
   scratch: ${TMPDIR:-/tmp}
@@ -47,7 +49,7 @@ container:
   # mosaic-exec.sh takes the interpreter and the script; the image and weights
   # are passed to it through the environment.
   exec: ${roots.setup}/mosaic/singularity/mosaic-exec.sh
-  image: ${roots.setup}/images/mosaic.sif
+  image: ${roots.setup}/../images/mosaic.sif
   weights: ${roots.setup}/weights
   scratch: ${MOSAIC_SCRATCH:-/n/netscratch/bsabatini_lab/Everyone/${USER}/mosaic}
 

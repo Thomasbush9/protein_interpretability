@@ -1,31 +1,28 @@
-"""Figure: the model uses the direction, it does not merely contain it.
+"""Figure: the intervention evidence, shown descriptively — v2.
 
-Everything else in this study is correlational. This is the intervention: add
-alpha * PC2 to the final pair representation, hand the modified trunk state to
-the structure module, and read what changes.
+v1 of this figure plotted the pooled |odd| ranking and printed confirmatory
+p-values. Those were withdrawn on 2026-09-06: the eight control orientations
+are shared across assays (no per-assay seed), the pooled statistic averages
+doses whose contributions have opposite signs, and PC2 is also the
+highest-GAIN direction, so ranking |odd| against isotropic controls does not
+test sign structure. The docstring's old claim that the plot shows "never the
+raw magnitude" did not survive contact with the archived doses.
 
-Effect size cannot answer the question, and the figure is built so that it never
-looks like it does. Any vector of the same norm moves the output about as much.
-What separates a direction the model USES from one that merely disturbs it is
-SIGN STRUCTURE: PC2 is the broadening axis, so +alpha should broaden and -alpha
-should sharpen, and the response should be ODD in alpha. A direction with no
-privileged orientation has an even response. So the statistic plotted is
+What the corrected figure shows instead:
 
-    odd(a) = [f(+a) - f(-a)] / 2a
+  A  PC2's odd distogram-width response per unit alpha, per protein, at each
+     dose separately. The dose non-monotonicity is the point: positive and
+     dominant at |a|=10, reversed at |a|=30, indistinguishable from the
+     controls at |a|=3. The grey band is the per-dose spread of the eight
+     (shared) random controls.
+  B  the deletion test, which the master report previously omitted: remove one
+     direction from a real mutation's own delta-z, re-run the structure
+     module, and ask how much of the mutation's distogram response is undone.
+     Every PC2 interval overlaps the random ones and zero-recovery; the
+     surgery's positive control is what makes that null interpretable.
 
-and never the raw magnitude.
-
-  A  per protein, PC2 against the eight random directions drawn in that same
-     protein. The comparison is always within a protein, so differences in
-     chain length or representation scale cannot leak into it.
-  B  the two summaries that make it a test rather than an ordering: how often
-     PC2 ranks first out of nine, against the 1/9 expected by chance, and the
-     same for PC1. PC1 is a real component -- substitution volume -- but not the
-     stability axis, so it is the control that decides whether this is about PC2
-     or about components in general.
-
-Colour: PC2 is the accent, its own controls are grey, and PC1 is the second slot
-so it never reads as a variant of PC2.
+  python fig_causal.py --steer runs/steer_pooled_v2.json \
+      --ablate runs/ablate_v2.json --out figures/causal.png
 """
 from __future__ import annotations
 
@@ -55,13 +52,17 @@ HALO = dict(boxstyle="round,pad=0.18", facecolor=SURF, edgecolor="none",
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--steer", required=True)
+ap.add_argument("--ablate", required=True)
 ap.add_argument("--metric", default="d_sd_site")
+ap.add_argument("--mode", default="sym")
 ap.add_argument("--out", required=True)
 a = ap.parse_args()
 
 S = json.load(open(a.steer))
-M = S["metrics"][a.metric]
-rows = M["per_assay"]
+cell = S["cells"][f"{a.metric}:{a.mode}"]
+rows = cell["per_assay"]
+doses = sorted({float(k) for r in rows for k in r["pc2_odd_per_dose"]})
+A = json.load(open(a.ablate))
 
 
 def tidy(ax, title, sub=None):
@@ -74,72 +75,53 @@ def tidy(ax, title, sub=None):
     ax.set_axisbelow(True)
 
 
-fig = plt.figure(figsize=(13.6, 5.0))
-gs = fig.add_gridspec(1, 2, wspace=0.26, top=0.80, bottom=0.15,
-                      width_ratios=[1.45, 1.0])
+fig = plt.figure(figsize=(13.6, 5.2))
+gs = fig.add_gridspec(1, 2, wspace=0.28, top=0.78, bottom=0.15,
+                      width_ratios=[1.15, 1.0])
 
-# ---- A: PC2 against its own controls, per protein ------------------------
+# ---- A: odd response per dose, protein by protein ------------------------
 ax = fig.add_subplot(gs[0, 0])
-order = np.argsort([abs(r["pc2"]) for r in rows])
-ys = np.arange(len(rows))
-for i, oi in enumerate(order):
-    r = rows[oi]
-    # The archive keeps only the best control per assay, which is the one the
-    # ranking turns on; drawing it as the bar end states the comparison exactly.
-    ax.plot([0, r["random_max"]], [ys[i], ys[i]], color=C_REF, lw=5.0,
-            solid_capstyle="butt", alpha=0.45, zorder=2)
-    ax.scatter([abs(r["pc2"])], [ys[i]], s=58, color=SLOT[0], zorder=5,
-               edgecolor=SURF, linewidth=1.3)
-ax.set_yticks(ys, [rows[oi]["assay"] for oi in order], fontsize=8.4)
-ax.set_xlabel("|odd component| per unit alpha  —  sign-structured response")
-ax.set_xlim(0, None)
-top = len(rows) - 1
-ax.annotate("PC2", (abs(rows[order[-1]]["pc2"]), top), xytext=(0, 13),
-            textcoords="offset points", ha="center", fontsize=8.8,
-            color=SLOT[0], bbox=HALO, zorder=6)
-ax.annotate("best of 8 random", (rows[order[0]]["random_max"], 0),
-            xytext=(-6, 0), textcoords="offset points", ha="right", va="center",
-            fontsize=8.6, color=INK2, bbox=HALO, zorder=6)
-ax.set_ylim(-0.9, len(rows) + 0.3)
-tidy(ax, "A  PC2 against its own controls, protein by protein",
-     f"{M['label']}; controls redrawn inside each protein")
+xs = np.arange(len(doses))
+for r in rows:
+    ys = [r["pc2_odd_per_dose"][f"{d}"] for d in doses]
+    ax.plot(xs, ys, color=SLOT[0], lw=1.1, alpha=0.55, zorder=4)
+    ax.scatter(xs, ys, s=16, color=SLOT[0], alpha=0.75, zorder=5,
+               edgecolor=SURF, linewidth=0.6)
+ax.axhline(0, color=INK2, lw=1.0, zorder=3)
+for i, d in enumerate(doses):
+    firsts = cell["by_abs_odd_per_dose"][f"{d}"]["first"]
+    ax.annotate(f"first by |odd|\n{firsts}/{cell['n_assays']}",
+                (i, 0), xycoords=("data", "axes fraction"),
+                xytext=(0, -34), textcoords="offset points", ha="center",
+                fontsize=8.2, color=INK2, annotation_clip=False)
+ax.set_xticks(xs, [f"|α| = {d:g}" for d in doses], fontsize=9.2)
+ax.set_ylabel("odd component per unit α, distogram width at site")
+tidy(ax, "A  The odd response is not one number — it reverses with dose",
+     "one line per protein (12); controls shared across proteins, so no p-value")
 
-# ---- B: the test --------------------------------------------------------
+# ---- B: the deletion null ------------------------------------------------
 ax = fig.add_subplot(gs[0, 1])
-n = M["n_assays"]
-chance = M["p_first_each"] * n
-bars = [("PC2", M["pc2_first"], SLOT[0]), ("PC1 (control)", M["pc1_beats"], SLOT[1])]
-xs = np.arange(len(bars))
-for x, (lab, v, c) in zip(xs, bars):
-    ax.bar(x, v, width=0.5, color=c, zorder=3)
-    # Counts sit INSIDE tall bars and beside short ones, so neither lands on
-    # the chance line the eye is meant to compare them against.
-    if v > chance * 2:
-        ax.annotate(f"{v}/{n}", (x, v), xytext=(0, -16),
-                    textcoords="offset points", ha="center", fontsize=10.0,
-                    color=SURF, fontweight="semibold", zorder=7)
-    else:
-        ax.annotate(f"{v}/{n}", (x + 0.28, v), xytext=(4, 0),
-                    textcoords="offset points", ha="left", va="center",
-                    fontsize=10.0, color=INK, bbox=HALO, zorder=7)
-ax.axhline(chance, color=C_REF, lw=1.5, ls=(0, (4, 3)), zorder=4)
-ax.annotate(f"chance {chance:.1f}", (0.99, chance), xycoords=("axes fraction", "data"),
-            xytext=(0, 8), textcoords="offset points", ha="right", fontsize=8.4,
-            color=C_REF, bbox=HALO, zorder=6)
-ax.set_xticks(xs, [b[0] for b in bars], fontsize=9.2)
-ax.set_ylim(0, max(b[1] for b in bars) + 2.2)
-ax.set_ylabel(f"proteins where it ranks first of {int(1/M['p_first_each'])}")
-# A permutation p of exactly 0 means "no draw beat the observation", not zero
-# probability, so it is reported as a bound rather than as 0.
-pr = M["p_rank"]
-pr_txt = "< 5e-06" if pr == 0 else f"= {pr:.1e}"
-ax.annotate(f"exact binomial (rank-first, 1/9)  p = {M['p_sign']:.1e}\n"
-            f"mean rank {M['mean_norm_rank']:.2f} of 1.0  (chance 0.50)\n"
-            f"permutation  p {pr_txt}",
-            (0.97, 0.97), xycoords="axes fraction", ha="right", va="top",
-            fontsize=8.8, color=INK, bbox=HALO, zorder=6)
-tidy(ax, "B  Not an ordering — a test",
-     "PC1 is a real component but not the stability axis")
+dirs = sorted(A["directions"], key=lambda d: (not d.startswith("PC"), d))
+ys = np.arange(len(dirs))[::-1]
+for y, dn in zip(ys, dirs):
+    r = A["directions"][dn]["recovery"]
+    c = SLOT[0] if dn == "PC2" else (SLOT[1] if dn == "PC1" else C_REF)
+    ax.plot([r["ci_lo"], r["ci_hi"]], [y, y], color=c, lw=2.4, alpha=0.8,
+            zorder=4, solid_capstyle="butt")
+    ax.scatter([r["mean"]], [y], s=54, color=c, zorder=5, edgecolor=SURF,
+               linewidth=1.2)
+ax.axvline(0, color=INK2, lw=1.0, zorder=3)
+ax.set_yticks(ys, dirs, fontsize=9.0)
+ax.set_xlabel("distogram recovery when the direction is deleted "
+              "(1 = reverts to wild type)")
+resid = max(A["positive_control_residual_fraction"].values())
+ax.annotate("every interval includes zero;\n"
+            "PC2 − random paired gaps all include zero\n"
+            f"surgery verified: ≤ {resid:.0e} of the component survives",
+            (0.03, 0.05), xycoords="axes fraction", ha="left", va="bottom",
+            fontsize=8.6, color=INK, bbox=HALO, zorder=6)
+tidy(ax, "B  Deleting the direction from real mutations changes nothing",
+     "4 proteins × 16 variants spanning each assay's DMS range")
 
 fig.savefig(a.out, dpi=170, bbox_inches="tight", facecolor=SURF)
 print(f"wrote {a.out}")

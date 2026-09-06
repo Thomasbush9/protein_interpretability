@@ -15,9 +15,11 @@ as a quirk that had to be hand-handled:
               the same way. Boltz-2 uses 2-22 A over 64 bins; the others report
               their own grid. Comparing a distogram against a mismatched centre
               vector produces a number, silently, and that number is wrong.
-  plddt       pLDDT is per-ATOM in OpenFold3 and per-TOKEN in Protenix and
-              Boltz-2. The two disagree in LENGTH, so the check is that plddt
-              and the coordinates describe the same N.
+  plddt       All three wrappers emit per-TOKEN pLDDT (OpenFold3's raw head is
+              per-atom; the wrapper reduces it at the representative atom per
+              token). A wrapper regression back to per-atom disagrees in
+              LENGTH, so the check is that plddt and the coordinates describe
+              the same N.
   shapes      Sample and batch dimensions are squeezed by `run_one` with a
               `while ndim > 3` loop. If a wrapper ever returns a shape that loop
               does not reduce, the array stays [1,N,N,B] and every downstream
@@ -103,8 +105,9 @@ def validate(record, *, check_probabilities=True) -> RecordShape:
         if arr.shape != want:
             raise SchemaError(
                 f"{field} has shape {arr.shape}, expected {want} ({meaning}). "
-                + ("pLDDT is per-ATOM in OpenFold3 and per-TOKEN in Protenix and "
-                   "Boltz-2; a length mismatch here is usually that."
+                + ("every wrapper here emits per-TOKEN pLDDT; a length "
+                   "mismatch usually means a wrapper handed over the raw "
+                   "per-atom head (OpenFold3's is per-atom before reduction)."
                    if field == "plddt" else ""))
         if not np.all(np.isfinite(arr)):
             bad = int((~np.isfinite(arr)).sum())

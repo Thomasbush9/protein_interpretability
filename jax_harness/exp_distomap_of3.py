@@ -168,9 +168,12 @@ def main():
         coords = np.asarray(res.coordinates)
         coords = coords.reshape((-1,) + coords.shape[-2:])[0]
         ca = coords[ri]
-        # OF3 exposes plddt as LOGITS over bins, per ATOM (not per token, as in
-        # Boltz-2). Expectation over bin centres on [0,1], then indexed at the
-        # representative atom so the result is per-residue and comparable.
+        # The RAW OF3 confidence head exposes plddt as LOGITS over bins, per
+        # ATOM. Expectation over bin centres on [0,1], then indexed at the
+        # representative atom so the result is per-residue and comparable --
+        # the same reduction the mosaic wrapper does internally, so
+        # wrapper-path captures are already per-token and only this raw path
+        # does it by hand.
         pll = np.asarray(res.confidence.plddt_logits)
         pll = pll.reshape((-1,) + pll.shape[-2:])[0]          # [Na, n_pl_bins]
         nb = pll.shape[-1]

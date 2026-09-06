@@ -24,10 +24,10 @@
 #   sbatch analysis.sbatch analyze_svd.py --out ... [args]
 set -euo pipefail
 
-SETUP=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/mosaic_setup
+SETUP=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/binder_design/mosaic_setup
 WORK=/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files
 
-export MOSAIC_SIF=$SETUP/images/mosaic.sif
+export MOSAIC_SIF=$SETUP/../images/mosaic.sif
 export MOSAIC_WEIGHTS=$SETUP/weights
 export MOSAIC_SCRATCH=/n/netscratch/bsabatini_lab/Everyone/$USER/mosaic
 

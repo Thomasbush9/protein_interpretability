@@ -72,12 +72,15 @@ def test_every_entry_records_where_its_numbers_came_from():
 
 # ---- model-specific semantics that must NOT be normalised away -------------
 
-def test_plddt_granularity_differs_between_models():
-    """Per-ATOM in OpenFold3, per-TOKEN in Protenix and Boltz-2. Smoothing this
-    over is how a length mismatch becomes a silent reindex."""
-    assert caps.capabilities("of3").plddt_granularity == "atom"
-    assert caps.capabilities("protenix").plddt_granularity == "token"
-    assert caps.capabilities("boltz2").plddt_granularity == "token"
+def test_plddt_granularity_is_per_token_in_all_three():
+    """All three WRAPPERS emit per-token pLDDT. OpenFold3's raw head is
+    per-atom, reduced at the representative atom inside the mosaic wrapper;
+    this test asserted "atom" for of3 until 2026-09-06, pinning a stale fact
+    that a publication audit then built a P0 finding on. The evidence for
+    "token" is the archives themselves: every of3 plddt array has residue
+    length, and two independent implementations agree residue-wise."""
+    for name in ("of3", "protenix", "boltz2"):
+        assert caps.capabilities(name).plddt_granularity == "token", name
 
 
 def test_trunk_depths_differ_and_are_recorded():

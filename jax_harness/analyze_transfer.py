@@ -55,6 +55,22 @@ from compare_internal_output import (grouped_split, output_matrix,  # noqa: E402
                                      ridge_fit, ridge_pred, select_k)
 
 
+def loao_design(n_assays: int) -> str:
+    """The protocol sentence, derived from the cohort rather than typed.
+
+    A hardcoded eleven-train/twelfth-test sentence was written into the 16-
+    and 25-assay archives for two weeks (tests/test_protocol_text.py scans
+    for it, which is why this docstring paraphrases). The sentence is built
+    here, from the number it describes, and refuses a cohort it cannot
+    describe.
+    """
+    if n_assays < 2:
+        raise ValueError(
+            f"leave-one-assay-out needs at least 2 assays, got {n_assays}")
+    return (f"leave-one-assay-out (train on {n_assays - 1} assays, test on "
+            f"the held-out one; {n_assays} in the cohort)")
+
+
 def zscore(a):
     a = np.asarray(a, dtype=float)
     return (a - a.mean(0)) / (a.std(0) + 1e-9)
@@ -271,7 +287,7 @@ def main():
            "internal_vec": "internal 128-dim TRANSFERRED",
            "internal": "internal TRANSFERRED", "chemistry": "chemistry TRANSFERRED",
            "output_rich": "output-rich TRANSFERRED", "TM_to_WT": "TM to WT"}
-    print(f"\nLeave-one-assay-out: trained on 11 assays, tested on the 12th\n")
+    print(f"\nLeave-one-assay-out: {loao_design(len(names))}\n")
     print(f"{'held-out assay':16s}" + "".join(f"{LAB[k][:22]:>24s}" for k in ORDER))
     print("-" * (16 + 24 * len(ORDER)))
     for n in names:
@@ -316,7 +332,7 @@ def main():
     _res = (
         {"k_sweep": sweep, "protocol": {**pi_protocol.protocol(
              script="analyze_transfer.py",
-             design="leave-one-assay-out (train on 11 assays, test on the 12th)",
+             design=loao_design(len(names)),
              layer=pi_protocol.layers("final", n_layers=A[names[0]]["raw"]["internal"].shape[1] // 4),
              features={b: pi_protocol.features(
                  b, A[names[0]]["raw"][b].shape[1],
@@ -333,7 +349,15 @@ def main():
                   "internal is 4 scalar quantities x every layer, so dz enters "
                   "it only as a per-layer norm."),
              "design_short": "leave-one-assay-out", "k": a.k, "lam": a.lam,
-                      "normalisation": "features and target z-scored within assay",
+                      # The label must follow the branch: --inductive scales
+                      # features by ONE pooled training statistic, and an
+                      # archive once claimed within-assay scaling for it.
+                      "normalisation": (
+                          "target z-scored within assay; features scaled by "
+                          "pooled TRAINING-assay statistics" if a.inductive
+                          else "features and target z-scored within assay "
+                               "(transductive: the held-out assay's own "
+                               "unlabelled variants set its feature scale)"),
                       "n_assays": len(names)},
          "normalisation_mode": "inductive (training-assay statistics)"
              if a.inductive else "transductive (each assay's own statistics)",

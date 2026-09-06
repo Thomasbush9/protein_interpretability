@@ -13,10 +13,15 @@ the two numbers the claim rests on, so the recipe is legible end to end:
                the site, displacement at the site and its max, radius-of-
                gyration change, pLDDT chain mean, pLDDT at the site, and their
                difference.
-    scaling    features and target z-scored WITHIN each assay
-    protocol   leave-one-assay-out: fit on 15 assays, test on the 16th
+    scaling    features and target z-scored WITHIN each assay (transductive:
+               the held-out assay's own unlabelled variants set its scale)
+    protocol   leave-one-assay-out: fit on every assay in the cohort but one,
+               test on that one (15 -> 1 for heldout_assays, 24 -> 1 for
+               panel5_assays -- the sentence follows the cohort, it is not a
+               constant)
     model      ridge, lambda = 10, intercept unpenalised
-    statistic  within-assay Spearman on the held-out assay, meaned over the 16
+    statistic  within-assay Spearman on the held-out assay, meaned equally
+               over the cohort's assays
 
 WHY THE FEATURES COME FROM ACCESSORS AND NOT FROM KEYS. `dz_site` is a 128-wide
 vector in the gym2s family and a per-layer NORM in this one; `plddt` is spelled
@@ -126,8 +131,9 @@ def run_model(model, a, assays):
     mean_out = float(np.mean([rho_out[k] for k in names]))
 
     # Which assays measure folding stability, from the assay ids themselves.
-    # For panel5 this is empty by construction -- ProteinGym has no stability
-    # assay above 100 residues -- and the split below simply does not print.
+    # For panel5 this is empty by construction: the panel's selection criteria
+    # excluded stability assays (ProteinGym's three above 100 residues -- 212,
+    # 245, 403 aa -- did not meet them), so the split below does not print.
     stability = {x.id.split("_")[0]: "Tsuboyama_2023" in x.id for x in assays}
     print(f"\n=== {model}  ({len(names)} assays, "
           f"{internal[names[0]].shape[1]} channels, lam={a.lam:g}) ===")

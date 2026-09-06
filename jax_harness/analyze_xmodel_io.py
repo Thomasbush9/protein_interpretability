@@ -125,7 +125,7 @@ def main():
                 per[m]["pLDDT@site"][asy].append(pi_stats.spearman(pls[te], y[te]))
 
     ORDER = [INTERNAL, "pLDDT", "pLDDT@site"]
-    print(f"Spearman vs measured stability, held-out positions "
+    print(f"Spearman vs the measured DMS phenotype, held-out positions "
           f"({len(assays)} assays x {a.splits} splits)\n")
     print(f"{'model':10s}{'layers':>7s}" + "".join(f"{k:>34s}" for k in ORDER))
     out = {"models": list(MODELS), "assays": assays, "splits": a.splits,

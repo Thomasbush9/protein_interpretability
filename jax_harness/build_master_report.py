@@ -30,7 +30,8 @@ OUT = R.W / "report_master"
 FIGSPEC = {
     "headline.png": ("python fig_headline.py --transfer {transfer} --bw {bw} "
                      "--out {out}"),
-    "causal.png": ("python fig_causal.py --steer {steer} --out {out}"),
+    "causal.png": ("python fig_causal.py --steer {steer} --ablate {ablate} "
+                   "--out {out}"),
     "xmodel_io.png": ("python fig_xmodel_io.py --xio {xio} --out {out}"),
 }
 # Repo-relative since the promotion: the entry points are still in jax_harness,
@@ -40,6 +41,7 @@ FIGSPEC = {
 CODE = ["jax_harness/build_master_report.py", "jax_harness/pi_report.py",
         "jax_harness/fig_headline.py", "jax_harness/fig_causal.py",
         "jax_harness/analyze_transfer.py", "jax_harness/analyze_steer_pool.py",
+        "jax_harness/analyze_ablate.py", "jax_harness/exp_ablate_pc.py",
         "jax_harness/compare_internal_output.py", "jax_harness/analyze_pc2.py",
         "jax_harness/analyze_chem.py", "jax_harness/analyze_xmodel_io.py",
         "jax_harness/fig_xmodel_io.py", "jax_harness/analyze_layer_match.py",
@@ -68,7 +70,6 @@ def sec_lede(TR, HO, ST, SV):
         return R.pending("summary")
     P = TR["predictors"]
     g = TR["gaps"]["internal 128-dim - output-rich"]
-    st = ST["metrics"]["d_sd_site"]
     ho = HO["summary"]["pc2_inductive"]
     return f"""
 <section id=summary>
@@ -76,12 +77,15 @@ def sec_lede(TR, HO, ST, SV):
 <div class="card ok">
 <div class=row><span class="chip c-ok">1</span>
 <strong>Boltz-2's internal state predicts mutational stability far better than
-anything it emits.</strong></div>
+prespecified summaries of its sampled structure and confidence.</strong></div>
 <p>A probe on the trunk reaches Spearman
 <span class=big>{P['internal_vec']['mean']:+.3f}</span>
 [{P['internal_vec']['ci_lo']:+.3f}, {P['internal_vec']['ci_hi']:+.3f}] on a protein it
-was never trained on, against {P['output_rich']['mean']:+.3f} for the richest
-description of the structure the model actually produces &mdash; a gap of
+was never trained on, against {P['output_rich']['mean']:+.3f} for ten
+prespecified summaries of the sampled C&alpha; geometry and confidence (a
+37-feature version moves this baseline, not the conclusion; the distogram
+head, all-atom output and full output distribution are not part of either
+comparator) &mdash; a gap of
 {g['gap']:+.3f} [{g['ci_lo']:+.3f}, {g['ci_hi']:+.3f}] that holds in
 <span class=big>{g['wins']} of {g['n_assays']}</span> proteins. The probe
 reads the 128 pair channels at the final trunk layer &mdash; the direction the
@@ -98,16 +102,22 @@ proteins outside the set the basis was fitted on, that single direction reaches
 stability assays and only
 {abs(ho['non-stability (4)']['mean']):.3f} on non-stability ones.</p>
 </div>
-<div class="card ok">
-<div class=row><span class="chip c-ok">3</span>
-<strong>The model uses it, not merely contains it.</strong></div>
-<p>Injecting along the direction produces a <em>sign-structured</em> change in
-the emitted distogram &mdash; broadening for +&alpha;, sharpening for
-&minus;&alpha; &mdash; that beats eight random directions of the same size in
-{st['pc2_first']} of {st['n_assays']} proteins (exact binomial, rank-first against 1/9;
-p&nbsp;=&nbsp;{st['p_sign']:.1e}; mean rank {st['mean_norm_rank']:.2f} against
-0.50 by chance). The same test on PC1, a real component that is <em>not</em> the
-stability axis, passes in only {st['pc1_beats']} of {st['n_assays']}.</p>
+<div class="card warn">
+<div class=row><span class="chip c-warn">3</span>
+<strong>Intervention evidence is descriptive, and the deletion test is
+null.</strong></div>
+<p>Injecting the direction into the final z moves the distogram width with a
+consistent sign at the middle dose in all twelve proteins, and pLDDT the
+opposite way &mdash; but the response is dose-non-monotone, PC2 is also the
+highest-<em>gain</em> direction (its sign-blind even component ranks first in
+most proteins), and the eight "independent" controls are the same eight
+orientations in every protein, so the earlier confirmatory p-values are
+withdrawn (&sect;5). Deleting PC2 from a real mutation's own &Delta;z changes
+what the model emits no more than deleting a random direction &mdash; every
+PC2-minus-random interval includes zero, with the surgery verified. The
+supported statement is that the direction is <em>readable</em> and its
+injection <em>perturbs</em> the output; that the model <em>uses</em> it is not
+established.</p>
 </div>
 </section>"""
 
@@ -264,7 +274,7 @@ the protein it is scored on.</figcaption></figure>
 
 <h3>The protocol, and why it is the fair comparison</h3>
 <p>{pr['n_assays']} stability assays, {pr['design']}, ridge with &lambda; =
-{pr['lam']}, features and target {pr['normalisation']}. The feature cap is k = {pr['k']},
+{pr['lam']}, {pr['normalisation']}. The feature cap is k = {pr['k']},
 at or above every block's own width, so none of the transferred predictors is
 truncated: 128 pair channels, 256 per-layer magnitudes, 17 chemistry features,
 10 emitted-structure features.</p>
@@ -480,55 +490,101 @@ principal angles, against 0.06 for random subspaces of the same dimension
 </section>"""
 
 
-def sec_causal(ST, stale):
-    if not ST:
-        return R.pending("causal test")
-    sd = ST["metrics"]["d_sd_site"]
-    pl = ST["metrics"]["d_plddt_site"]
-    rows = [[m["label"], f"{m['pc2_first']}/{m['n_assays']}", f"{m['p_sign']:.1e}",
-             f"{m['mean_norm_rank']:.3f}",
-             ("< 5e-06" if m["p_rank"] == 0 else f"{m['p_rank']:.1e}"),
-             f"{m['pc1_beats']}/{m['n_assays']}"]
-            for m in (sd, pl)]
+def sec_causal(ST, AB, stale):
+    if not ST or not AB:
+        return R.pending("intervention evidence")
+    sd = ST["cells"]["d_sd_site:sym"]
+    pl = ST["cells"]["d_plddt_site:sym"]
+    doses = sorted(sd["by_abs_odd_per_dose"], key=float)
+    n = sd["n_assays"]
+    dose_rows = [[f"|&alpha;| = {float(k):g}",
+                  f"{sd['by_abs_odd_per_dose'][k]['first']}/{n}",
+                  f"{sd['signed_positive_per_dose'][k]}/{n}"]
+                 for k in doses]
+    abl = AB["directions"]
+    gaps = AB["pc2_minus_random"]
+    abl_rows = [[dn,
+                 f"{abl[dn]['recovery']['mean']:+.3f} "
+                 f"[{abl[dn]['recovery']['ci_lo']:+.3f}, "
+                 f"{abl[dn]['recovery']['ci_hi']:+.3f}]",
+                 f"{abl[dn]['d_plddt']['mean']:+.5f}",
+                 f"{abl[dn]['ca']['mean']:.3f}"]
+                for dn in sorted(abl)]
     warn = ('<div class="card warn"><div class=row><span class="chip c-warn">'
             'stale</span><strong>Figure older than its data</strong></div></div>'
             ) if "causal.png" in stale else ""
     return f"""
 <section id=causal>
-<h2>5 &middot; Does the model use the direction?</h2>
+<h2>5 &middot; Does the model use the direction? Not established.</h2>
 {warn}
-<figure><img src="figures/causal.png" alt="Left: per-protein comparison of PC2's
-sign-structured response against the best of eight random directions. Right: how
-often PC2 and PC1 rank first, against chance.">
-<figcaption>Twelve proteins, eight random controls drawn inside each.</figcaption>
+<div class="card warn">
+<div class=row><span class="chip c-warn">corrected 2026-09-06</span>
+<strong>The earlier confirmatory p-values on this page are withdrawn.</strong></div>
+<p>This section previously reported that PC2's odd response outranks eight
+random directions in 6/12 proteins, exact binomial p&nbsp;=&nbsp;9.6e-04. Four
+defects, found by the September publication audit and confirmed on the archived
+runs, remove the confirmatory reading. (1)&nbsp;The eight controls are the
+<em>same</em> eight orientations in every protein &mdash; the launcher passed no
+per-assay seed &mdash; so the null's twelve independent comparisons do not
+exist. (2)&nbsp;The response is not odd in &alpha;: the pooled statistic
+averages doses whose per-dose contributions have opposite signs, the |&alpha;|=30
+term reversing in 12/12 proteins, and at &alpha;=&minus;30 the distogram
+<em>broadens</em> everywhere, contradicting the sign story as previously
+written. (3)&nbsp;PC2 is also the highest-<em>gain</em> direction &mdash; its
+even, sign-blind component ranks first in 8/12 &mdash; and once the odd response
+is normalised by the even one, PC2 ranks first in only 4/12, with odd at most
+~9% of even for every direction. The SVD report's own steering section had
+already published that negative. (4)&nbsp;The reported cell was the best of six
+mode&thinsp;&times;&thinsp;metric cells; the literal single-row injection is at
+chance.</p>
+</div>
+<figure><img src="figures/causal.png" alt="Left: PC2's odd distogram-width
+response per dose, against the shared random controls, showing the dose
+non-monotonicity. Right: the deletion test — distogram recovery when one
+direction is removed from a real mutation's own delta-z, PC2 against random
+directions, every interval crossing zero.">
+<figcaption>Left: injection, twelve proteins, descriptive. Right: deletion of
+the direction from real mutational responses, four proteins &mdash; the
+better-posed test, and it is null.</figcaption>
 </figure>
 <p>PC2 was derived from the pair row after all 64 Pairformer layers &mdash;
 exactly the tensor the structure module is conditioned on &mdash; so the
-intervention needs no surgery inside the stack: run the trunk normally, add
+injection needs no surgery inside the stack: run the trunk normally, add
 &alpha; &times; direction to the final z, and hand the modified state to the
-structure module.</p>
-<div class="card">
-<div class=row><span class="chip c-run">the design</span>
-<strong>Effect size cannot answer this; sign structure can</strong></div>
-<p>Any vector of that norm moves the output about as much, so "PC2 changed the
-prediction" is evidence of nothing. PC2 is the broadening axis, so if the model
-represents it as a signed quantity, +&alpha; should broaden and &minus;&alpha;
-should sharpen and the response should be ODD in &alpha;. A direction that
-merely disturbs the computation has no privileged orientation and its response
-is EVEN. Each response is therefore split into
-<code>odd(a) = [f(+a) &minus; f(&minus;a)] / 2a</code> and its even part, and
-only the odd part is tested.</p>
-</div>
-{R.table(["measurement", "PC2 first", "exact binomial p", "mean rank",
-          "permutation p", "PC1 control"], rows)}
-<p>Chance of ranking first is 1/9 per protein, so
-{sd['pc2_first']}/{sd['n_assays']} is roughly
-{sd['pc2_first'] / (sd['p_first_each'] * sd['n_assays']):.1f}&times; the expected
-count. The mean normalised rank of {sd['mean_norm_rank']:.2f} says PC2 sits near
-the top even where it is not first. PC1 &mdash; substitution volume, a real
-component but not the stability axis &mdash; passes in
-{sd['pc1_beats']}/{sd['n_assays']}, which is what rules out "components in
-general behave unlike random vectors".</p>
+structure module. What survives as observation, per dose (mode = sym,
+distogram width at the injected site):</p>
+{R.table(["dose", "PC2 first by |odd| (of 9)", "positive odd response"],
+         dose_rows)}
+<p>The signed observations are consistent and worth keeping: at the middle dose
+the width response is positive in {sd['signed_positive_per_dose'].get('10.0',
+sd['signed_positive_per_dose'][doses[1]])}/{n} proteins and the pLDDT response
+negative in {n - pl['signed_positive_per_dose'].get('10.0',
+pl['signed_positive_per_dose'][doses[1]])}/{n} &mdash; injecting the direction
+broadens the predicted distance distribution and lowers confidence at the site.
+An odd response is, however, generic first-order sensitivity
+(<code>f(z+&alpha;v) &minus; f(z&minus;&alpha;v) =
+2&alpha;&nabla;f&middot;v + O(&alpha;&sup3;)</code>): even a clean odd ranking
+would show alignment with the local gradient, not semantic use.</p>
+<h3>The deletion test &mdash; the better-posed question, and it is null</h3>
+<p>An injected vector is nothing the model ever produces. The sharper test
+takes a real variant's own &Delta;z = z<sub>mut</sub> &minus; z<sub>wt</sub>,
+removes one direction from it at every pair, and re-runs the structure module.
+If PC2 carries the phenotype the model reads, deleting it should cost more than
+deleting an arbitrary direction. It does not:</p>
+{R.table(["direction removed", "distogram recovery [95% CI]",
+          "&Delta; pLDDT", "CA shift (&Aring;)"], abl_rows)}
+<p>Every PC2-minus-random paired interval includes zero
+({", ".join(f"{g['gap']:+.3f} [{g['ci_lo']:+.3f}, {g['ci_hi']:+.3f}]"
+            for g in gaps.values())}; {AB['protocol']['n_assays']
+ if 'protocol' in AB else 4} proteins), CA shifts sit an order of magnitude
+below the sampler's own run-to-run drift, and the surgery is verified &mdash;
+the residual projection after removal is
+{max(AB['positive_control_residual_fraction'].values()):.1e} of the original,
+so "nothing changed" cannot be confused with "the deletion failed". Removing
+the direction does eliminate the probe's own prediction, but that is algebra,
+not biology. The defensible summary: the direction is readable and its
+injection perturbs the output; necessity, sufficiency and mediation are all
+unestablished, and the deletion evidence leans against necessity.</p>
 </section>"""
 
 
@@ -582,12 +638,14 @@ against its own pLDDT outputs. Right: the internal-minus-pLDDT gap per model
 with confidence intervals, all clearing zero.">
 <figcaption>{len(XI['assays'])} assays &times; {XI['splits']} splits, held-out
 residue positions, identical variants across models.</figcaption></figure>
-<p>The internal side is a ridge on the 128-dimensional pair-row difference at
-the FINAL trunk layer &mdash; chosen not for being best but because it is the
-tensor the structure module is conditioned on. The baseline is each model's own
-<strong>pLDDT</strong> rather than its geometry, deliberately: "your confidence
-head already tells you this" is the first objection a referee raises.</p>
-{R.table(["model", "layers", "internal (128-dim)", "pLDDT",
+<p>The internal side is a ridge on channels selected from the 128-dimensional
+pair-row difference at the FINAL trunk layer (an inner training-only sweep
+keeps at most 64 of the 128 &mdash; the archive records what it kept) &mdash;
+chosen not for being best but because it is the tensor the structure module is
+conditioned on. The baseline is each model's own <strong>pLDDT</strong> rather
+than its geometry, deliberately: "your confidence head already tells you this"
+is the first objection a referee raises.</p>
+{R.table(["model", "layers", "internal (&le;64 of 128 ch)", "pLDDT",
           "gap vs pLDDT", "splits won", "gap vs pLDDT@site"], rows)}
 <p>All three models land within a few hundredths of each other on the internal
 side ({lo:+.3f} to {hi:+.3f}) despite 64, 48 and 16 trunk blocks respectively,
@@ -738,7 +796,7 @@ def sec_limits(TR):
 <h2>10 &middot; What this does not establish</h2>
 <ul>
 <li><strong>Scope.</strong> All twelve stability assays are Tsuboyama 2023
-mini-domains, 37&ndash;72 residues. Nothing here shows the effect on larger
+mini-domains, 61&ndash;72 residues. Nothing here shows the effect on larger
 proteins or on other stability datasets. The three non-Tsuboyama stability
 assays in ProteinGym are also the only large ones (212, 245 and 403 residues),
 so one experiment would answer both &mdash; it has not been run.</li>
@@ -746,9 +804,14 @@ so one experiment would answer both &mdash; it has not been run.</li>
 internal against the same model's own output on identical rows. No claim is
 made against the ProteinGym leaderboard, and the substitution-chemistry baseline
 is close enough that none should be.</li>
-<li><strong>The causal test is about the structure module.</strong> It shows the
-emitted distogram responds to the direction with the right sign. It does not
-show the direction is what the trunk computes it FOR.</li>
+<li><strong>The intervention evidence is descriptive.</strong> Injection
+perturbs the emitted distogram and confidence with a consistent sign at the
+middle dose, but the controls were shared across proteins, the response is
+dose-non-monotone and magnitude-dominated, and the deletion test is null
+(&sect;5) &mdash; manipulability was observed; necessity, sufficiency and
+mediation were not established, and the deletion evidence leans against
+necessity. Nothing here shows the direction is what the trunk computes it
+FOR.</li>
 <li><strong>One quantity, one row.</strong> Everything rests on
 <code>dz_site</code>, the pair row at the mutated residue averaged over
 partners. A separate analysis found the averaging does not cost much, but it is
@@ -870,7 +933,11 @@ def main():
     ap.add_argument("--layermatch", default=str(R.W / "runs/layer_match.json"))
     ap.add_argument("--svd-ds", default=str(R.W / "runs/svd_ds_v1.json"))
     ap.add_argument("--scrutiny", default=str(D / "scrutiny_v2.json"))
-    ap.add_argument("--steer", default=str(R.W / "runs/steer_pooled.json"))
+    # v2, descriptive: the v1 steer_pooled.json p-values were withdrawn on
+    # 2026-09-06 (shared controls across assays). The deletion null joined the
+    # page the same day; it existed since August but was never an input here.
+    ap.add_argument("--steer", default=str(R.W / "runs/steer_pooled_v2.json"))
+    ap.add_argument("--ablate", default=str(R.W / "runs/ablate_v2.json"))
     ap.add_argument("--jac", default=str(R.W / "runs/jac_pooled.json"))
     ap.add_argument("--gate", default=str(R.W / "runs/gate_probe.json"))
     ap.add_argument("--rotate", default=str(R.W / "runs/rotate_pooled.json"))
@@ -880,7 +947,7 @@ def main():
 
     resolved = {k: getattr(a, k) for k in
                 ("transfer", "bw", "heldout", "depth", "xmodel", "svd", "steer",
-                 "jac", "gate", "rotate", "basis", "chem", "scrutiny",
+                 "ablate", "jac", "gate", "rotate", "basis", "chem", "scrutiny",
                  "transfer_ind", "xio", "layermatch", "svd_ds")}
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "figures").mkdir(exist_ok=True)
@@ -918,6 +985,7 @@ def main():
     HO, DP = R.load(a.heldout, quoted=True), R.load(a.depth, quoted=True)
     XM, SV = R.load(a.xmodel, quoted=True), R.load(a.svd, quoted=True)
     ST, JP = R.load(a.steer, quoted=True), R.load(a.jac, quoted=True)
+    AB = R.load(a.ablate, quoted=True)
     GP, RT = R.load(a.gate, quoted=True), R.load(a.rotate, quoted=True)
     BA = R.load(a.basis)
     CH, SC = R.load(a.chem), R.load(a.scrutiny)
@@ -927,7 +995,7 @@ def main():
     body = "".join([
         sec_lede(TR, HO, ST, SV), sec_headline(TR, BW, stale, TI),
         sec_numbers(TR, SV, CH, HO, LM), sec_chem(TR, CH, SC, BW), sec_what(SV),
-        sec_causal(ST, stale), sec_xmodel(XI, XM, stale), sec_where(DP, XM, BA), sec_heldout(HO),
+        sec_causal(ST, AB, stale), sec_xmodel(XI, XM, stale), sec_where(DP, XM, BA), sec_heldout(HO),
         sec_mech(JP, GP, RT), sec_limits(TR), sec_ledger(resolved), sec_repro(manifest, resolved),
     ])
 
@@ -937,10 +1005,12 @@ def main():
         eyebrow="comprehensive report &middot; august 2026",
         h1="What Boltz-2 knows about stability but does not say",
         lede="A single direction in the pair representation predicts measured "
-             "mutational stability far better than any description of the "
-             "structure the model emits, transfers to proteins it was never "
-             "fitted on, and changes the output with the right sign when "
-             "injected.",
+             "mutational stability better than 37 prespecified summaries of "
+             "the sampled C-alpha geometry and confidence, and transfers to "
+             "proteins it was never fitted on. Injecting it perturbs the "
+             "distogram and confidence; deleting it from a real mutation's "
+             "response changes nothing — the intervention evidence is "
+             "descriptive, not causal.",
         nav_items=[("summary", "summary"), ("performance", "1 internal vs output"),
                    ("numbers", "2 which number"),
                    ("chemistry", "3 just chemistry?"),

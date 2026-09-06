@@ -13,13 +13,14 @@ built wrapper, and `verify()` compares both against the capability registry and
 raises when they disagree.
 
 WHAT IS DELIBERATELY NOT ABSTRACTED. There is no common `Layer` type across
-Pairformer, OpenFold3 and Protenix, and no attempt to make their pLDDT mean the
-same thing -- it is per-ATOM in OpenFold3 and per-TOKEN in the other two, and the
-arrays are different lengths for the same protein. Those differences are carried
-as recorded properties and enforced at the point of comparison by
-`records.assert_comparable`, not smoothed away here. An adapter's job is to make
-the three models runnable through one declaration, not to pretend they are one
-model.
+Pairformer, OpenFold3 and Protenix. Model-specific semantics are carried as
+recorded properties and enforced at the point of comparison by
+`records.assert_comparable`, not smoothed away here — the distogram grids are
+the live case. (pLDDT is NOT such a case: all three wrappers emit per-token
+values on [0,1]; OpenFold3's raw per-atom head is reduced at the
+representative atom inside the wrapper. The registry mis-declared this until
+2026-09-06.) An adapter's job is to make the three models runnable through one
+declaration, not to pretend they are one model.
 """
 
 from __future__ import annotations

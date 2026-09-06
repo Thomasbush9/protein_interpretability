@@ -18,12 +18,24 @@ quietly wrong when the wrapper is upgraded. Two consequences:
     only function here that touches a backend, and it takes the model as an
     argument rather than importing one.
 
-WHAT IS DELIBERATELY NOT NORMALISED. pLDDT is per-ATOM in OpenFold3 and
-per-TOKEN in Protenix and Boltz-2, and the distogram grids are not guaranteed to
-match. The plan asks for common outputs to be normalised "without normalising
-away architecture-specific semantics" — so those differences are recorded here
-as properties rather than smoothed over, and `records.assert_comparable` is what
-enforces them at the point two models are actually compared.
+WHAT IS DELIBERATELY NOT NORMALISED. The distogram grids are not guaranteed to
+match across models. The plan asks for common outputs to be normalised "without
+normalising away architecture-specific semantics" — so those differences are
+recorded here as properties rather than smoothed over, and
+`records.assert_comparable` is what enforces them at the point two models are
+actually compared.
+
+A CORRECTED FACT, AND WHAT IT TAUGHT. This table declared OpenFold3's pLDDT
+per-ATOM until 2026-09-06, and a publication audit built a P0 finding on the
+declaration. It was stale: OF3's raw confidence head IS per-atom, but the
+mosaic wrapper this project reads has mapped it to representative-atom
+per-TOKEN values (softmax, bin centres on [0,1]) since 2026-04, before every
+archived capture — verified by two independent implementations agreeing
+residue-wise (r = 0.96–0.99) and by the arrays having residue length. The
+registry said "atom", the data said "token", and `verify_against_model` could
+not notice because it only ever reads the trunk depth — a vacuous pass of
+exactly the kind its own docstring warns about. The moral is recorded here so
+the next stale fact is treated as suspect rather than load-bearing.
 """
 
 from __future__ import annotations
@@ -116,7 +128,11 @@ REGISTRY: dict[str, ModelCapabilities] = {
         n_trunk_blocks=48,
         pair_width=PAIR_WIDTH,
         single_width=SINGLE_WIDTH,
-        plddt_granularity="atom",           # per-ATOM here, per-token elsewhere
+        # Per-token, like the other two. The RAW OF3 confidence head is
+        # per-atom; the mosaic wrapper reduces it at the representative atom
+        # per token (losses/of3.py) and has since 2026-04. This entry said
+        # "atom" until 2026-09-06 — see the module docstring.
+        plddt_granularity="token",
         supports_msa=True,
         # kl_site and kl_glob were missing from this list while every
         # xm_of3_r1_*.npz on disk carried both, so a spec asking for what this

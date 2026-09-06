@@ -101,9 +101,11 @@ EXPLICIT = {
         "phenotype (fitness, 101-630 aa) and a phenotype axis at matched "
         "length (fitness / abundance / activity). Chosen by select_panel.py, "
         "one assay per protein, N_eff >= 1000, soluble-first so membrane-ness "
-        "does not track length. Contains NO stability assays -- ProteinGym has "
-        "none above 100 aa -- so it measures the boundary of the stability "
-        "result rather than confirming it."),
+        "does not track length. Contains NO stability assays -- ProteinGym's "
+        "three above 100 aa (212, 245, 403 aa) did not meet the selection "
+        "criteria; 64 of its 67 stability assays are sub-100-aa Tsuboyama "
+        "mini-domains -- so it measures the boundary of the stability result "
+        "rather than confirming it."),
     "length_ladder": (
         ["CCDB_ECOLI_Tripathi_2016",        # 101 aa
          "PHOT_CHLRE_Chen_2023",            # 118 aa

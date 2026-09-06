@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pi_archive  # noqa: E402
 import pi_models  # noqa: E402
 from protein_interpretability.collection import capabilities as caps  # noqa: E402
+from protein_interpretability.collection import records  # noqa: E402
 
 PROTOCOL = dict(
     script="probe_capabilities.py",
@@ -37,10 +38,60 @@ PROTOCOL = dict(
 )
 
 
+def query_sequence(a3m_path):
+    """The first (query) sequence of an a3m, uppercased, gaps dropped."""
+    seq, started = [], False
+    for line in Path(a3m_path).read_text().splitlines():
+        if line.startswith(">"):
+            if started:
+                break
+            started = True
+            continue
+        if started:
+            seq.append(line.strip())
+    s = "".join(seq).replace("-", "")
+    return "".join(c for c in s if c.isupper())
+
+
+def probe_forward(wrapper, name, seq, a3m, recycles):
+    """One real forward, and what it proves about the confidence semantics.
+
+    The registry mis-declared OpenFold3's pLDDT granularity for three weeks
+    while `verify_against_model` read only the trunk depth — a vacuous pass.
+    This is the check that would have caught it: the pLDDT the wrapper hands
+    over must have one value per token (same length as the CA coordinates) and
+    live on [0,1], and the whole extraction must satisfy the record schema.
+    """
+    ex = pi_models.run_one(wrapper, seq, a3m, recycles=recycles, name=name)
+    plddt = ex.plddt.reshape(-1)
+    n_tok = int(ex.ca.reshape((-1, 3)).shape[0] if ex.ca.ndim == 2
+                else ex.ca.shape[-2])
+    obs = {
+        "plddt_len": int(plddt.shape[0]), "n_tokens": n_tok,
+        "plddt_min": float(plddt.min()), "plddt_max": float(plddt.max()),
+        "plddt_granularity_observed":
+            "token" if plddt.shape[0] == n_tok else
+            f"NOT per-token (len {plddt.shape[0]} vs {n_tok} tokens)",
+        "plddt_on_unit_interval": bool(plddt.min() >= 0.0
+                                       and plddt.max() <= 1.0),
+    }
+    try:
+        records.validate(ex)
+        obs["records_validate"] = "pass"
+    except Exception as exc:                             # noqa: BLE001
+        obs["records_validate"] = f"FAIL: {exc}"[:300]
+    return obs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", default="boltz2,of3,protenix")
     ap.add_argument("--msa", default="full", choices=pi_models.MSA_REGIMES)
+    ap.add_argument("--forward-a3m", default=None,
+                    help="run one real forward per model on this alignment's "
+                         "query sequence and verify the confidence semantics "
+                         "(pLDDT per token, on [0,1], schema-valid)")
+    ap.add_argument("--recycles", type=int, default=3)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -82,6 +133,23 @@ def main() -> int:
             entry["drift"] = str(exc)
             failures.append(f"{name}: {exc}")
             print(f"{name:10s} DRIFT {exc}", flush=True)
+
+        if a.forward_a3m:
+            try:
+                fw = probe_forward(wrapper, name, query_sequence(a.forward_a3m),
+                                   a.forward_a3m, a.recycles)
+            except Exception as exc:                     # noqa: BLE001
+                fw = {"forward_error": repr(exc)[:300]}
+                failures.append(f"{name}: forward probe failed")
+            entry["forward"] = fw
+            gran = fw.get("plddt_granularity_observed")
+            if gran is not None and gran != declared.plddt_granularity:
+                failures.append(
+                    f"{name}: plddt granularity — table says "
+                    f"{declared.plddt_granularity!r}, forward observed {gran!r}")
+            if fw.get("records_validate", "pass") != "pass":
+                failures.append(f"{name}: {fw['records_validate']}")
+            print(f"{name:10s} forward: {fw}", flush=True)
         result[name] = entry
         del wrapper
 

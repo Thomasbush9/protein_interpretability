@@ -83,7 +83,7 @@ for i, m in enumerate(MODELS):
            label=f"{NICE[m]} ({D['layers'][m]} layers)")
 ax.set_xticks(xs, [lab for _, lab in BARS], fontsize=8.8)
 ax.set_ylim(0, 0.72)
-ax.set_ylabel("Spearman vs measured stability")
+ax.set_ylabel("Spearman vs the measured DMS phenotype")
 ax.legend(frameon=False, fontsize=8.6, loc="upper right")
 tidy(ax, "A  Internal beats the model's own outputs, in all three",
      f"{len(D['assays'])} assays x {D['splits']} splits, "

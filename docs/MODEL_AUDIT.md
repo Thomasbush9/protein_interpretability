@@ -11,7 +11,7 @@ oversight.
 | model | trunk blocks | pair / single | pLDDT | distogram grid | verified |
 |---|---|---|---|---|---|
 | Boltz-2 | 64 | 128 / 384 | per token | 2–22 Å, 64 bins, centres 2.15625…21.84375 | against a loaded model |
-| OpenFold3 | 48 | 128 / 384 | **per atom** | not recorded — read it from the model | against a loaded model |
+| OpenFold3 | 48 | 128 / 384 | per token (raw head per atom, reduced in-wrapper) | not recorded — read it from the model | against a loaded model |
 | Protenix | 16 | 128 / 384 | per token | not recorded — read it from the model | against a loaded model |
 
 All three resolve through `pi_models.load(name, msa=...)`, produce the
@@ -19,11 +19,23 @@ normalised `Extraction` record that `collection/records.py` validates, and have
 their declared trunk depth confirmed against a real loaded model by
 `jax_harness/probe_capabilities.py` (`capabilities.json`: `all_verified: true`).
 
-Two differences are recorded as properties rather than smoothed away, because
-smoothing them is how a wrong number gets produced quietly:
+One difference is recorded as a property rather than smoothed away, because
+smoothing it is how a wrong number gets produced quietly — and one former
+entry here is a correction:
 
-- **pLDDT granularity.** Per-atom in OpenFold3, per-token in the other two. The
-  arrays have different lengths for the same protein.
+- **pLDDT granularity (corrected 2026-09-06).** This document said "per-atom in
+  OpenFold3" from 2026-08-18 until a publication audit built a P0 finding on
+  it. The claim was stale: the raw OF3 confidence head is per-atom, but the
+  mosaic wrapper has reduced it to representative-atom per-token values
+  (softmax, bin centres on [0,1]) since 2026-04 — before every archived
+  capture. Verified against the archives themselves: every OF3 pLDDT array has
+  residue length, two independent implementations agree residue-wise at
+  r = 0.96–0.99, and per-site values show the terminal-dip signature. All
+  three wrappers therefore emit comparable per-token pLDDT on [0,1]. One known
+  residual asymmetry: Protenix expectations use bin *edges* (`linspace(0,1,50)`)
+  where the others use bin *centres*, inflating its pLDDT by ~+0.008–0.01 at
+  the high end — irrelevant to within-model analyses, visible only where the
+  three share an absolute-pLDDT axis.
 - **Distogram grids.** Only Boltz-2's is recorded here. A KL computed across two
   different distance grids is a well-formed number that means nothing, so
   cross-model comparisons go through `records.assert_comparable`, which checks
