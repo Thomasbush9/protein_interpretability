@@ -20,9 +20,12 @@ averaging coordinates would shrink every structure toward its own mean and
 manufacture agreement. Every geometry feature is computed inside one draw, from
 superposed structures, before anything is averaged.
 
-The internal side is not re-collected: the trunk is deterministic given the MSA
-and recycle count, so the archived `xm_boltz2_r1_*` pair rows ARE the internal
-representation for these same variants.
+INTERNAL AND EMITTED COME FROM THE SAME FORWARD. The archived cross-model
+captures are `msa='subsample'`; pairing their pair rows with output measured at
+`msa='full'` would hide an alignment change inside a test of the sampler, so
+`exp_ensemble` captures both sides itself and this script reads both from the
+one artifact. Running the script over each regime's archives in turn is also
+the matched MSA-regime comparison.
 
     uv run python experiments/analysis/ensemble_baseline.py \
         --out $W/runs/ensemble_baseline.json
@@ -43,7 +46,7 @@ import geom                                                    # noqa: E402
 import pi_archive                                              # noqa: E402
 import pi_protocol                                             # noqa: E402
 import pi_stats                                                # noqa: E402
-from protein_interpretability import artifacts                 # noqa: E402
+
 from protein_interpretability.analysis.emitted_geometry import (  # noqa: E402
     GEOMETRY_FEATURES, geometry_matrix,
 )
@@ -71,8 +74,9 @@ def draw_block(ca_d, ca_wt_d, plddt_d, plddt_site_d, pos):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--glob", default=str(W / "runs/ensemble/ens_boltz2_*.npz"))
-    ap.add_argument("--captures", default=str(W / "runs/xmodel_layers"))
+    ap.add_argument("--glob", default=str(W / "runs/ensemble/ens_full_*.npz"),
+                    help="one MSA regime's archives; run once per regime")
+    ap.add_argument("--regime", default="full", choices=("full", "subsample"))
     ap.add_argument("--lam", type=float, default=LAM)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -99,13 +103,8 @@ def main():
         blocks["ens_mean"][key] = S.mean(0)
         blocks["ens_mean_sd"][key] = np.concatenate([S.mean(0), S.std(0)], 1)
 
-        cap = artifacts.load_capture(
-            Path(a.captures) / f"xm_boltz2_r1_{assay}.npz",
-            require_vectors=True)
-        X = cap.pair_row(-1)
-        m = [list(cap.field("mutant")).index(mm) for mm in
-             [str(x) for x in d["mutant"]]]
-        internal[key] = X[m]
+        # internal from the SAME forward, same regime, same rows
+        internal[key] = np.asarray(d["dz_vec"], float)
         target[key] = y
 
         # The scale everything here has to clear: how far apart two draws of
@@ -175,6 +174,7 @@ def main():
                   "geometry": pi_protocol.features(
                       "emitted geometry", len(GEOMETRY_FEATURES))},
         source=a.glob, n_assays=len(names), lam=a.lam,
+        msa_regime=a.regime,
         aggregation="features per draw against that draw's WT, then averaged; "
                     "coordinates never averaged across draws",
         common_random_numbers="not claimed; atom counts differ between WT and "
