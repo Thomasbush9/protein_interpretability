@@ -115,11 +115,21 @@ def load(name: str, *, msa: str):
     numbers are meant to be reproduced -- and they are not interchangeable:
 
         subsample   Boltz-2 draws 1024 alignment rows per PRNG key. This is
-                    mosaic's own default and what every capture written through
-                    this module so far has used.
+                    mosaic's own default, what every capture written through
+                    this module has used, and -- checked on disk 2026-09-06 --
+                    what all 43 archived `xm_*` cross-model captures record.
         full        the whole alignment, which is what `pi_core.load_model`
-                    does and what every ARCHIVED Boltz-2 capture was produced
-                    with.
+                    does. The `gym*` captures written through pi_core were
+                    produced this way.
+
+    THE PARAGRAPH ABOVE USED TO SAY that `full` was "what every ARCHIVED
+    Boltz-2 capture was produced with", and the error message below said the
+    same to anyone who mistyped the argument. It was false for the entire
+    cross-model family. Under `subsample` the alignment is drawn per key, so a
+    wild type and its mutant can see different 1024-row subsets -- an MSA
+    difference sitting underneath the mutation, in captures whose emitted
+    coordinates are visibly worse than a `full` rerun of the same sequences.
+    Read the regime off the artifact, never off this docstring.
 
     Measured across two assays (`exp_msa_regime.py`), the difference costs
     nothing scientifically: dz_site agrees between regimes as well as two
@@ -139,8 +149,9 @@ def load(name: str, *, msa: str):
     if msa not in MSA_REGIMES:
         raise ValueError(
             f"msa must be one of {MSA_REGIMES}, got {msa!r}. Use 'full' for "
-            "results meant to be reproduced -- every archived Boltz-2 capture "
-            "was produced that way -- and 'subsample' for everyday runs.")
+            "results meant to be reproduced bit-for-bit, and 'subsample' for "
+            "everyday runs. Do not assume an existing archive's regime -- the "
+            "cross-model captures are 'subsample'; read it off the artifact.")
     wrapper = BUILDERS[name]()
     if name == "boltz2":
         wrapper = _set_subsample(wrapper, msa == "subsample")

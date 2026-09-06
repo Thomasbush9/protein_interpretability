@@ -9,15 +9,16 @@ about sampling variance, not about what the trunk knows.
 
 THE DESIGN, FROZEN BEFORE ANY OUTPUT WAS READ:
 
-  what varies      the diffusion key, and nothing else. The MSA is the archived
-                   alignment, the regime is full (never subsample -- a changed
-                   key must not be allowed to redraw the alignment), and the
-                   trunk is run ONCE per sequence and reused across draws, so
-                   the trunk state is bit-identical across the ensemble.
+  what varies      the diffusion key, and nothing else. The alignment is the
+                   archived one, the regime is stated by --msa (never left
+                   implicit -- under 'subsample' a changed key redraws the
+                   alignment, which would put an MSA difference inside a test
+                   of the sampler), and the trunk is run ONCE per sequence and
+                   reused across draws, so the trunk state is bit-identical
+                   across the ensemble.
   draws            4, keys 0..3, prespecified.
   rows             the same variants as the xm_boltz2_r1_* captures, so the
-                   ensemble baseline is paired row-for-row with the internal
-                   probe it will be compared against.
+                   ensemble is paired row-for-row with the archived work.
   cohort           a balanced subset of heldout16 chosen by a stated rule
                    (below), not by looking at outcomes.
   aggregation      FEATURES, never coordinates. Coordinates from different
@@ -26,6 +27,16 @@ THE DESIGN, FROZEN BEFORE ANY OUTPUT WAS READ:
                    the stability the test is asking about. Each draw's geometry
                    is computed against THAT draw's wild type, then the 37
                    features are averaged (mean; mean+SD secondary).
+
+THE INTERNAL SIDE IS CAPTURED HERE TOO, from the same forward. Reading the
+archived `xm_boltz2_r1_*` pair rows would have been cheaper and wrong: every
+one of those 16 captures records `msa='subsample'`, so pairing them with output
+measured under `msa='full'` would put an alignment change inside a comparison
+meant to isolate the diffusion sampler. Internal and emitted now come from one
+trunk state, one regime, one row set.
+
+That also makes `--msa` the matched MSA-regime comparison the audit asks for
+separately: run the subset twice and the only difference is the regime.
 
 WHAT THIS DOES NOT CLAIM. Not common random numbers. A substitution changes the
 side chain's atom count, so the atom array is re-indexed from the mutation site
@@ -101,6 +112,11 @@ def main():
     ap.add_argument("--draws", type=int, default=4)
     ap.add_argument("--recycles", type=int, default=3)
     ap.add_argument("--msa-cap", type=int, default=2048)
+    ap.add_argument("--msa", choices=("full", "subsample"), required=True,
+                    help="no default on purpose: the archived xm_* captures "
+                         "used 'subsample' while the loader's own docstring "
+                         "claimed 'full', and that discrepancy is exactly what "
+                         "this flag exists to stop being implicit")
     ap.add_argument("--sampling-steps", type=int, default=200)
     ap.add_argument("--limit", type=int, default=0,
                     help="first N archived variants only -- for a smoke test; "
@@ -142,8 +158,12 @@ def main():
     (work / "yamls").mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
-    # full MSA, never subsample: a changed key must not redraw the alignment.
-    model = pi.load_model(subsample_msa=False)
+    # A changed diffusion key must never redraw the alignment. Under
+    # 'subsample' the alignment is drawn per key, so WT and mutant can see
+    # different 1024-row subsets -- an MSA difference sitting on top of the
+    # mutation. That is a property of the regime, which is why the regime is
+    # recorded and swept rather than assumed.
+    model = pi.load_model(subsample_msa=(a.msa == "subsample"))
 
     def featurise(seq, tag):
         a3m = work / "msa" / f"{tag}.a3m"
@@ -160,6 +180,11 @@ def main():
         p = np.asarray(out.plddt).reshape(-1)
         ca = np.asarray(out.backbone_coordinates)[:, 1].astype(np.float32)
         return ca, p
+
+    def pair_row(tr, row, tok_mask):
+        """The 128-channel pair row at `row`, averaged over valid partners."""
+        z = np.asarray(tr.z)[0]                       # (N, N, 128)
+        return z[row][tok_mask].mean(0)
 
     key0 = jax.random.key(0)
     f_wt, h = featurise(wt, "wt")
@@ -184,10 +209,10 @@ def main():
     wt_spread = float(np.mean([
         _rmsd(ca_wt[i], ca_wt[j])
         for i in range(a.draws) for j in range(i + 1, a.draws)]))
-    print(f"   mean pairwise WT draw-to-draw CA RMS (unaligned): "
+    print(f"   mean pairwise WT draw-to-draw CA RMSD (superposed): "
           f"{wt_spread:.3f} A", flush=True)
 
-    CA, PL, PLS, ATM, CONV = [], [], [], [], []
+    CA, PL, PLS, ATM, CONV, DZ = [], [], [], [], [], []
     for n, r in enumerate(rows):
         mo = re.match(r"([A-Z])(\d+)([A-Z])", r["mutant"])
         p0 = int(mo.group(2)) - 1
@@ -195,6 +220,8 @@ def main():
         ATM.append(int(np.asarray(f_m["atom_pad_mask"][0]).sum()))
         emb_m, tr_m, _ = trunk_capture(model, f_m, ii, jj, 0,
                                        recycles=a.recycles, key=key0)
+        # internal, from THIS forward -- same trunk state the draws below use
+        DZ.append(pair_row(tr_m, p0, mask) - pair_row(tr_w, p0, mask))
         cas, pls, plss = [], [], []
         for d in range(a.draws):
             ca, pl = sample(emb_m, tr_m, f_m, d, a.sampling_steps)
@@ -225,14 +252,19 @@ def main():
         design=(f"diffusion ensemble: trunk run ONCE per sequence and reused, "
                 f"{a.draws} diffusion draws (keys 0..{a.draws-1}) varying only "
                 f"the sampler; MSA regime full so a changed key cannot redraw "
-                f"the alignment; rows taken from the archived capture so the "
-                f"ensemble is paired with the internal probe"),
+                f"the alignment; internal pair row captured from the SAME "
+                f"forward so both sides share one MSA regime; rows taken from "
+                f"the archived capture"),
         layer=pi_protocol.layers("final"),
-        features=pi_protocol.features(
-            "emitted CA coordinates and pLDDT, per draw", 0),
+        features={
+            "internal": pi_protocol.features(
+                "dz_vec: final-layer pair row at the mutated position, "
+                "averaged over partners, mutant minus wild type", 128),
+            "emitted": pi_protocol.features(
+                "CA coordinates and pLDDT, per draw", 0)},
         source=a.capture, n_assays=1,
         draws=a.draws, sampling_steps=a.sampling_steps,
-        msa_regime="full",
+        msa_regime=a.msa,
         n_variants=len(rows),
         limited=(f"SMOKE: first {a.limit} variants only, not comparable to a "
                  f"full run" if a.limit else False),
@@ -250,6 +282,7 @@ def main():
         "ca_wt": ca_wt.astype(np.float32),           # (draws, res, 3)
         "plddt": np.asarray(PL, np.float32),         # (n_var, draws)
         "plddt_site": np.asarray(PLS, np.float32),
+        "dz_vec": np.asarray(DZ, np.float32),        # (n_var, 128) internal
         "atoms_wt": np.int32(n_atom_wt),
         "atoms_mut": np.asarray(ATM, np.int32),
         "wt_draw_spread": np.float32(wt_spread),
