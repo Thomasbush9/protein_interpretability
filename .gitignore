@@ -15,3 +15,7 @@ __marimo__/
 
 # Site profile: cluster- and user-specific paths, overriding configs/site/default.yaml
 configs/site/local.yaml
+
+# MSA staging dirs some wrappers write into cwd during a forward
+of3_msa/
+protenix_msa/
