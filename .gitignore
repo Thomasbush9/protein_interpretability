@@ -11,6 +11,7 @@ wheels/
 .DS_Store
 .egg-info
 __marimo__/
+tmp_mutation_signal/
 
 
 # Site profile: cluster- and user-specific paths, overriding configs/site/default.yaml
