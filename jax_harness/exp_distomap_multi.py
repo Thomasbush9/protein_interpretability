@@ -24,6 +24,9 @@ import pi_models  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, choices=pi_models.available())
+    ap.add_argument("--msa", default="subsample",
+                    choices=pi_models.MSA_REGIMES,
+                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
     ap.add_argument("--data", required=True)
     ap.add_argument("--ids", required=True, help="comma list; first is the reference")
     ap.add_argument("--recycles", type=int, default=3)
@@ -43,7 +46,7 @@ def main():
     man = {r["id"]: r for r in csv.DictReader((data / "manifest.csv").open())}
 
     t0 = time.time()
-    model = pi_models.load(args.model)
+    model = pi_models.load(args.model, msa=args.msa)
     print(f"[{time.time()-t0:6.1f}s] {args.model} loaded; {len(ids)} sequences", flush=True)
 
     out, ref_p, depths = {}, None, []
@@ -82,6 +85,12 @@ def main():
     out["msa_depth"] = np.array(depths)
     out["single_sequence"] = np.array(bool(args.single_sequence))
     out["mutations"] = np.array([man.get(i, {}).get("mutations", "") for i in ids])
+    # The MSA regime is not recoverable from the arrays, and the two are not
+    # interchangeable: `subsample` redraws the alignment per key and is not
+    # bit-reproducible. Read back off the built model rather than echoing the
+    # argument, so the record describes what ran.
+    for _k, _v in pi_models.regime_block(args.model, model).items():
+        out[_k] = np.array(str(_v))
     np.savez_compressed(args.out, **out)
     print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
           f"(bins={e.n_bins}, grid {e.centres[0]:.3f}..{e.centres[-1]:.3f} A)", flush=True)

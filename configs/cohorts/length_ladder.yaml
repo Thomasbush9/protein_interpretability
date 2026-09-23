@@ -1,0 +1,60 @@
+cohort: length_ladder
+description: "Every ProteinGym assay with an alignment on disk above 100 residues, 101 to 403 aa. Exists to ask whether the internal-versus-output result holds on proteins larger than the Tsuboyama mini-domains every other cohort here is made of. Overlaps heldout_assays by two assays, so use Cohort.assert_disjoint before making a held-out claim from it."
+derived_from: an explicit list in build_cohort_manifests.EXPLICIT
+n_assays: 5
+assays:
+  - id: CCDB_ECOLI_Tripathi_2016
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/CCDB_ECOLI_Tripathi_2016.csv
+      sha256: e1e53efae0e7a2389dc2fd1042f4c186c138fc8d3190fc3b2a1ee41f3d286d5e
+    n_single_variants: 1663
+    wt_length: 101
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel3/colabfold_output/CCDB_ECOLI_Tripathi_2016.a3m
+      sha256: b4912116f509543ee54661b0beeb2269cd669b3a5a40b0ead7d3850bab940fd2
+      rows: 2868
+      panel: panel3
+  - id: PHOT_CHLRE_Chen_2023
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PHOT_CHLRE_Chen_2023.csv
+      sha256: f73e370f79addebf48786ecfee146ac592a9024b0772c844d5d98c7e3c140530
+    n_single_variants: 2122
+    wt_length: 118
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel3/colabfold_output/PHOT_CHLRE_Chen_2023.a3m
+      sha256: 2c8145c0de71f493bf81a2b9389b3b38380b1130cd7b10b32d07c2b338254bbe
+      rows: 14608
+      panel: panel3
+  - id: ESTA_BACSU_Nutschel_2020
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/ESTA_BACSU_Nutschel_2020.csv
+      sha256: 5bc2144aa9c30d51f756411559916aeca781e3018519b76795c2e8975fda3382
+    n_single_variants: 2172
+    wt_length: 212
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel4/colabfold_output/ESTA_BACSU_Nutschel_2020.a3m
+      sha256: 9c0fa0d6430675ea5bd3366c11a36f7fc92706d4641efc0ece43e342e360f024
+      rows: 6878
+      panel: panel4
+  - id: TPMT_HUMAN_Matreyek_2018
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/TPMT_HUMAN_Matreyek_2018.csv
+      sha256: bafd9deb8ccc5e0454b7222f0dcb03e4facc1ad949177a65292bded268084d39
+    n_single_variants: 3648
+    wt_length: 245
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel4/colabfold_output/TPMT_HUMAN_Matreyek_2018.a3m
+      sha256: f34426bb0fffc39afa5fc3d4b266cac5f0018edd233956ab9fa8f32d6f6b4c2c
+      rows: 5684
+      panel: panel4
+  - id: PTEN_HUMAN_Matreyek_2021
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/PTEN_HUMAN_Matreyek_2021.csv
+      sha256: 1c52aba95950c6d3b1ac8320df4cb99a79ae97353bd43e24c87ef78dbb02e636
+    n_single_variants: 5083
+    wt_length: 403
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel4/colabfold_output/PTEN_HUMAN_Matreyek_2021.a3m
+      sha256: 9d6cfbd62a3cb1d73860cf8a341506c16a08acb31e77d141670f383ee6481e0f
+      rows: 8379
+      panel: panel4

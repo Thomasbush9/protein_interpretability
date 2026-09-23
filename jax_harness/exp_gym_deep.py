@@ -42,6 +42,7 @@ import csv
 import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,30 @@ sys.path.insert(0, str(Path(__file__).parent))
 import pi_models  # noqa: E402
 import pi_capture  # noqa: E402
 from exp_gym import graft_a3m  # noqa: E402
+
+
+@dataclass
+class _Args:
+    """The argparse namespace, as a type.
+
+    `collect_assay` was lifted out of `main()` verbatim, and its body reads
+    every setting off `args`. Rebuilding that object rather than rewriting a
+    hundred lines of `args.model` into `model` is what makes the extraction a
+    move rather than an edit -- the diff shows no expression changed, which is
+    the only cheap way to be sure the numerics did not.
+    """
+
+    model: str
+    assay: str
+    assay_dir: str
+    a3m: str
+    work: object
+    n_variants: int
+    recycles: int
+    sampling_steps: int
+    msa_cap: int
+    msa: str
+    out: object
 
 
 def softmax(x):
@@ -83,20 +108,25 @@ def distogram_per_layer(name, inner, z_layers, mask):
     return np.stack(out)          # [n_layers, N, N, B]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True,
-                    choices=["of3", "protenix", "boltz2"])
-    ap.add_argument("--assay", required=True)
-    ap.add_argument("--assay-dir", required=True)
-    ap.add_argument("--a3m", required=True)
-    ap.add_argument("--work", required=True)
-    ap.add_argument("--n-variants", type=int, default=100)
-    ap.add_argument("--recycles", type=int, default=3)
-    ap.add_argument("--sampling-steps", type=int, default=200)
-    ap.add_argument("--msa-cap", type=int, default=2048)
-    ap.add_argument("--out", required=True)
-    args = ap.parse_args()
+def collect_assay(model, assay, assay_dir, a3m, work, *, n_variants=100,
+                  recycles=3, sampling_steps=200, msa_cap=2048,
+                  msa="subsample", out_path=None):
+    """One assay through one model. Returns the arrays; writes nothing.
+
+    EXTRACTED FROM `main()` WITHOUT CHANGING AN EXPRESSION. Every line below was
+    main's body; only the argument names changed (`args.model` -> `model`) and
+    the `np.savez_compressed` moved out to the caller. It was pulled out so the
+    package's adapter can run the same numerics rather than reimplementing them
+    -- the archived cross-model captures came from this code, and a second
+    implementation of it would be a second thing to validate.
+
+    `out_path` is accepted and ignored except in the log line, so the message a
+    reader sees still names the file the caller is about to write.
+    """
+    args = _Args(model=model, assay=assay, assay_dir=assay_dir, a3m=a3m,
+                 work=work, n_variants=n_variants, recycles=recycles,
+                 sampling_steps=sampling_steps, msa_cap=msa_cap, msa=msa,
+                 out=out_path)
 
     import jax
     print(f"MSA server blocked at: {pi_models.block_network()}", flush=True)
@@ -118,7 +148,7 @@ def main():
     src = Path(args.a3m)
 
     t0 = time.time()
-    wrapper = pi_models.load(args.model)
+    wrapper = pi_models.load(args.model, msa=args.msa)
     inner = pi_models.inner(args.model, wrapper)
     cap_fn = pi_capture.CAPTURE[args.model]
     key = jax.random.key(0)
@@ -198,16 +228,27 @@ def main():
         while dzt.ndim > 4:
             dzt = dzt[:, 0]
         dz_row = np.linalg.norm(dzt, axis=-1)          # [L, N, N]
+        # The VECTOR, not its norm. A norm cannot support a subspace
+        # comparison: it discards the direction, which is the entire object of
+        # interest. `deep2_*` stored only the norm, which is why the
+        # cross-model analysis could not be done offline. Defined to match
+        # Boltz-2's dz_site exactly -- mean over partner residues of the pair
+        # row at the mutated position -- so the three models describe the same
+        # quantity even though their channel spaces are unrelated.
+        dz_vec = dzt[:, pos].mean(axis=1)              # [L, C]
         dst = sl - s_wt
         while dst.ndim > 3:
             dst = dst[:, 0]
         ds_tok = np.linalg.norm(dst, axis=-1)          # [L, N]
+        ds_vec = dst[:, pos]                           # [L, C_s]
         rec.append(dict(
             mutant=r["mutant"], pos=pos, score=float(r["DMS_score"]),
             kl_glob=kl.mean(axis=(1, 2)).astype(np.float32),
             kl_site=kl[:, pos].mean(axis=1).astype(np.float32),
             dz_site=dz_row[:, pos].mean(-1).astype(np.float32),
             ds_site=ds_tok[:, pos].astype(np.float32),
+            dz_vec=dz_vec.astype(np.float32),
+            ds_vec=ds_vec.astype(np.float32),
             plddt_mean=float(e.plddt.mean()), plddt_site=float(e.plddt[pos]),
         ))
         cas.append(e.ca)
@@ -218,6 +259,8 @@ def main():
            ("mutant", "pos", "score", "plddt_mean", "plddt_site")}
     for k in ("kl_glob", "kl_site", "dz_site", "ds_site"):
         out[k] = np.stack([r[k] for r in rec])        # [n_variants, n_layers]
+    for k in ("dz_vec", "ds_vec"):
+        out[k] = np.stack([r[k] for r in rec])        # [n_variants, n_layers, C]
     out["ca"] = np.stack(cas).astype(np.float32)      # TM on a login node
     out["ca_wt"] = e_wt.ca.astype(np.float32)
     # the fidelity evidence travels with the features it licenses
@@ -231,9 +274,43 @@ def main():
     out["model"] = np.array(args.model)
     out["assay"] = np.array(args.assay)
     out["n_layers"] = np.array(nL)
+    # The MSA regime is not recoverable from the arrays, and the two are not
+    # interchangeable: `subsample` redraws the alignment per key and is not
+    # bit-reproducible. Read back off the built model rather than echoing the
+    # argument, so the record describes what ran.
+    for _k, _v in pi_models.regime_block(args.model, wrapper).items():
+        out[_k] = np.array(str(_v))
+    print(f"\n[{time.time()-t0:6.1f}s] collected {args.out}  "
+          f"({len(rec)} variants x {nL} layers; dz_vec "
+          f"{out['dz_vec'].shape})", flush=True)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", required=True,
+                    choices=["of3", "protenix", "boltz2"])
+    ap.add_argument("--assay", required=True)
+    ap.add_argument("--assay-dir", required=True)
+    ap.add_argument("--a3m", required=True)
+    ap.add_argument("--work", required=True)
+    ap.add_argument("--n-variants", type=int, default=100)
+    ap.add_argument("--recycles", type=int, default=3)
+    ap.add_argument("--sampling-steps", type=int, default=200)
+    ap.add_argument("--msa-cap", type=int, default=2048)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--msa", default="subsample",
+                    choices=pi_models.MSA_REGIMES,
+                    help="MSA regime. Default `subsample` reproduces the archives this script has already written; use `full` for numbers meant to be reproduced -- it is bit-reproducible across keys and the subsample is not.")
+    args = ap.parse_args()
+
+    out = collect_assay(
+        args.model, args.assay, args.assay_dir, args.a3m, args.work,
+        n_variants=args.n_variants, recycles=args.recycles,
+        sampling_steps=args.sampling_steps, msa_cap=args.msa_cap,
+        msa=args.msa, out_path=args.out)
     np.savez_compressed(args.out, **out)
-    print(f"\n[{time.time()-t0:6.1f}s] wrote {args.out}  "
-          f"({len(rec)} variants x {nL} layers x 4 features)", flush=True)
+    print(f"wrote {args.out}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,531 @@
+<title>What Actually Needs Building</title>
+<style>
+  :root {
+    --ink: #16201f;
+    --muted: #5b6a64;
+    --paper: #f7f5f0;
+    --panel: #fffdf9;
+    --panel-2: #f1efe8;
+    --line: #dfdcd3;
+    --line-strong: #c9c5b9;
+    --spruce: #1a6a51;
+    --spruce-soft: #e2efe9;
+    --amber: #8a5310;
+    --amber-soft: #f5ead7;
+    --red: #97392d;
+    --red-soft: #f6e5e1;
+    --blue: #29597f;
+    --blue-soft: #e3eef6;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: Georgia, "Times New Roman", serif;
+  }
+  :root:not([data-theme="light"]) {
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ink: #e7ece9;
+      --muted: #9aa8a2;
+      --paper: #121716;
+      --panel: #191f1e;
+      --panel-2: #212927;
+      --line: #2c3533;
+      --line-strong: #3c4744;
+      --spruce: #63c29e;
+      --spruce-soft: #16302a;
+      --amber: #d7a052;
+      --amber-soft: #33291a;
+      --red: #e08a7c;
+      --red-soft: #34211e;
+      --blue: #7fb4dc;
+      --blue-soft: #1a2731;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ink: #e7ece9;
+    --muted: #9aa8a2;
+    --paper: #121716;
+    --panel: #191f1e;
+    --panel-2: #212927;
+    --line: #2c3533;
+    --line-strong: #3c4744;
+    --spruce: #63c29e;
+    --spruce-soft: #16302a;
+    --amber: #d7a052;
+    --amber-soft: #33291a;
+    --red: #e08a7c;
+    --red-soft: #34211e;
+    --blue: #7fb4dc;
+    --blue-soft: #1a2731;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 1.5rem; }
+
+  header { border-bottom: 1px solid var(--line-strong); padding: 3.4rem 0 2.2rem; }
+  .eyebrow {
+    margin: 0 0 .9rem;
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--spruce);
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5vw, 3.3rem);
+    line-height: 1.06;
+    text-wrap: balance;
+    letter-spacing: -.015em;
+  }
+  .standfirst {
+    max-width: 62ch;
+    margin: 1.1rem 0 0;
+    font-size: 1.09rem;
+    color: var(--muted);
+  }
+
+  main { display: flex; flex-direction: column; gap: 3.4rem; padding: 2.8rem 0 6rem; }
+  section { display: flex; flex-direction: column; gap: 1rem; }
+  h2 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 1.62rem;
+    font-weight: 700;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  h3 { margin: 0; font-size: 1rem; font-weight: 650; }
+  p { margin: 0; max-width: 68ch; }
+  code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--panel-2);
+    padding: .1em .32em;
+    border-radius: 3px;
+  }
+
+  .verdict {
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    border-left: 3px solid var(--spruce);
+    border-radius: 4px;
+    padding: 1.3rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: .7rem;
+  }
+  .verdict p { max-width: 72ch; }
+
+  .tally { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .chip {
+    font-family: var(--mono);
+    font-size: .73rem;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    padding: .22rem .55rem;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .c-exists { color: var(--spruce); background: var(--spruce-soft); }
+  .c-partial { color: var(--amber); background: var(--amber-soft); }
+  .c-missing { color: var(--red); background: var(--red-soft); }
+  .c-conflict { color: var(--blue); background: var(--blue-soft); }
+
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); font-size: .9rem; }
+  th, td { text-align: left; padding: .62rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--panel-2);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.path { font-family: var(--mono); font-size: .84rem; white-space: nowrap; }
+  td.impl { font-family: var(--mono); font-size: .82rem; color: var(--muted); }
+  td.st { white-space: nowrap; }
+  .group-row td {
+    background: var(--panel-2);
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .findings { display: flex; flex-direction: column; gap: 1.6rem; }
+  .finding {
+    border-left: 2px solid var(--line-strong);
+    padding-left: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: .55rem;
+  }
+  .finding.key { border-left-color: var(--spruce); }
+  .finding h3 { font-family: var(--serif); font-size: 1.16rem; font-weight: 700; }
+  .evidence {
+    font-family: var(--mono);
+    font-size: .82rem;
+    line-height: 1.7;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .75rem .9rem;
+    color: var(--muted);
+    overflow-x: auto;
+  }
+  .evidence strong { color: var(--ink); font-weight: 600; }
+  .rec {
+    font-size: .96rem;
+    padding-left: .85rem;
+    border-left: 2px solid var(--spruce);
+    color: var(--ink);
+  }
+  .rec b { font-weight: 650; }
+
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 1.05rem; }
+  ol.steps li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+  ol.steps li::before {
+    content: counter(s);
+    font-family: var(--mono);
+    font-size: .82rem;
+    font-weight: 650;
+    color: var(--spruce);
+    background: var(--spruce-soft);
+    border-radius: 3px;
+    height: 1.75rem;
+    display: grid;
+    place-items: center;
+  }
+  ol.steps .body { display: flex; flex-direction: column; gap: .28rem; }
+  ol.steps .body p { font-size: .95rem; color: var(--muted); }
+  ol.steps .body strong { color: var(--ink); font-size: 1rem; font-weight: 650; }
+
+  ul.plain { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .42rem; }
+  ul.plain li { max-width: 68ch; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 1.5rem 0 3rem;
+    color: var(--muted);
+    font-size: .85rem;
+  }
+  @media (max-width: 620px) {
+    ol.steps li { grid-template-columns: 1fr; gap: .4rem; }
+    ol.steps li::before { width: 1.75rem; }
+  }
+</style>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Section 3 · read against the code · 17 Aug 2026</p>
+    <h1>What actually needs building</h1>
+    <p class="standfirst">The target architecture is the right shape. But it is written as if the
+      library does not exist yet, and most of it does — under different names, in
+      <code>jax_harness/pi_*</code>. Three decisions have to be made before any code moves.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <div class="verdict">
+      <p><strong>Keep the architecture. Change how it is described, and settle three things first:</strong>
+        there are two model adapters where the plan assumes one; the package path the plan targets is
+        already occupied by an older generation of code; and the analysis boundary is drawn one word
+        too tightly — <em>model-free</em> and <em>jax-free</em> are not the same rule, and three
+        headline producers sit in the gap.</p>
+      <p>Nothing below argues against the design. The mapping is a scoping correction: roughly
+        half of §3 is promotion and naming work, not implementation.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Every module in §3, against what exists today</h2>
+    <p>Status is judged on whether a module's job is already done somewhere, not on whether a file
+      with that name exists.</p>
+    <div class="tally">
+      <span class="chip c-exists">7 already built</span>
+      <span class="chip c-partial">2 partial</span>
+      <span class="chip c-missing">7 missing</span>
+      <span class="chip c-conflict">1 conflict</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Planned module</th><th>What does this job today</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr class="group-row"><td colspan="3">collection</td></tr>
+          <tr>
+            <td class="path">models/</td>
+            <td class="impl">pi_models.py <em>and</em> pi_core.py — two of them</td>
+            <td class="st"><span class="chip c-conflict">conflict</span></td>
+          </tr>
+          <tr>
+            <td class="path">capture.py</td>
+            <td class="impl">pi_capture.py, pi_core.pairformer_capture</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+          <tr>
+            <td class="path">runner.py</td>
+            <td class="impl">inline in each exp_*.py</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+          <tr>
+            <td class="path">records.py</td>
+            <td class="impl">— cited as pi_schema.py, never written</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+          <tr>
+            <td class="path">storage.py</td>
+            <td class="impl">pi_archive.py — write seam, Capture, refusal tests</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+
+          <tr class="group-row"><td colspan="3">prediction</td></tr>
+          <tr>
+            <td class="path">runner.py / outputs.py</td>
+            <td class="impl">pi_models.run_one, inline in exp_distomap_*</td>
+            <td class="st"><span class="chip c-partial">partial</span></td>
+          </tr>
+
+          <tr class="group-row"><td colspan="3">intervention</td></tr>
+          <tr>
+            <td class="path">base / pair / measurements</td>
+            <td class="impl">inline in exp_steer, exp_ops, exp_amplify</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+
+          <tr class="group-row"><td colspan="3">analysis</td></tr>
+          <tr>
+            <td class="path">datasets.py</td>
+            <td class="impl">pi_archive.Capture (read side only)</td>
+            <td class="st"><span class="chip c-partial">partial</span></td>
+          </tr>
+          <tr>
+            <td class="path">representations.py</td>
+            <td class="impl">inline in each analyze_*.py</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+          <tr>
+            <td class="path">basis.py</td>
+            <td class="impl">pi_basis.py — Basis, fit, standardise; tested</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+          <tr>
+            <td class="path">metrics.py</td>
+            <td class="impl">pi_metrics.py</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+          <tr>
+            <td class="path">statistics.py</td>
+            <td class="impl">pi_stats.py — 26 importers, the busiest seam</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+          <tr>
+            <td class="path">plotting.py</td>
+            <td class="impl">21 fig_*.py scripts, nothing shared</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+
+          <tr class="group-row"><td colspan="3">experiments</td></tr>
+          <tr>
+            <td class="path">context.py</td>
+            <td class="impl">—</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+          <tr>
+            <td class="path">protocol.py</td>
+            <td class="impl">pi_protocol.py — 18 importers</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+          <tr>
+            <td class="path">provenance.py</td>
+            <td class="impl">pi_archive.run_provenance, pi_report</td>
+            <td class="st"><span class="chip c-exists">exists</span></td>
+          </tr>
+
+          <tr class="group-row"><td colspan="3">cli</td></tr>
+          <tr>
+            <td class="path">collect / predict / intervene / analyze</td>
+            <td class="impl">89 separate argparse entry points</td>
+            <td class="st"><span class="chip c-missing">missing</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>The three decisions</h2>
+    <div class="findings">
+
+      <div class="finding key">
+        <h3>1 · There are two model adapters, and this is the real work</h3>
+        <p>The plan assumes one <code>ModelAdapter</code>. The harness has two, built at different
+          times for different jobs, and both are load-bearing.</p>
+        <div class="evidence">
+          <strong>pi_core.py</strong> — joltz/Boltz-2 trunk. 19 importers. Produced every headline
+          capture (<strong>exp_gym2 → gym2s_*.npz</strong>).<br>
+          <strong>pi_models.py</strong> — mosaic adapter over boltz2 / of3 / protenix / af2.
+          3 importers. The cross-model work only.
+        </div>
+        <p>The newer one is the better interface: a registry, lazy backend imports, and a normalized
+          output schema — it already states the plan's own rule in its docstring
+          (<em>“extractors may be model-specific, analysis must not be”</em>). But it carries almost
+          none of the traffic, and the one that carries the traffic is the one that produced the
+          results we just verified.</p>
+        <p class="rec"><b>Proposal:</b> make <code>pi_models</code>'s interface the contract, and add a
+          Boltz-2/joltz adapter that <em>wraps <code>pi_core</code> unchanged</em>. Unifying by
+          rewriting would rewrite the code behind the headline, which §1 already forbids
+          (“do not rewrite validated numerical kernels”).</p>
+      </div>
+
+      <div class="finding key">
+        <h3>2 · The package path is already occupied</h3>
+        <p>§3 puts the library at <code>src/protein_interpretability/</code>. That directory is not
+          empty — it is the installed package, and it holds an entire earlier generation of the
+          project.</p>
+        <div class="evidence">
+          pyproject: <strong>package-dir = {"" = "src"}</strong> — so <code>import
+          protein_interpretability</code> gives you this, and none of the current science.<br>
+          contents: extractor_boltz, extractor_esmfold, extract_attention, msa_analysis,
+          <strong>attribution/</strong>, rsa/, scoring/, esm_head/<br>
+          plus <strong>14 MB of notebooks inside the package directory</strong><br>
+          last touched <strong>2026-05-20</strong> — dormant three months
+        </div>
+        <p>So the repository holds two generations that have never met: a package-shaped ESM and
+          Boltz-torch layer that nothing current imports, and a flat directory of 100 scripts that
+          does all the science and reaches its own modules through
+          <code>sys.path.insert</code> — 63 files do this.</p>
+        <p class="rec"><b>Proposal:</b> reclaim the name for the new library, move the notebooks out
+          of the package, and keep <code>attribution/</code> — it is well-built torch/Boltz-2
+          gradient plumbing and phase 6 (the ESMFold and AF2 audit) is the natural place to judge
+          it. Mechanical work, no scientific risk, and it unblocks everything else.</p>
+      </div>
+
+      <div class="finding key">
+        <h3>3 · Model-free is not jax-free</h3>
+        <p>§10 promises offline analysis “installs and runs without model-specific environments”.
+          That is achievable — no analysis script loads a model — but only if the rule is written
+          about <em>backends and weights</em> rather than about JAX.</p>
+        <div class="evidence">
+          68 of 100 files import no model stack at all.<br>
+          Of the 32 that do: <strong>25 load a model</strong>, 2 take a pre-loaded one, and
+          <strong>5 use jax purely as accelerated linear algebra</strong>.<br>
+          Top-level <code>import jax</code>, no model:
+          <strong>analyze_svd, analyze_pc2, analyze_layer_match</strong> — all three are report producers.<br>
+          Function-local: analyze_transfer (behind <code>--k-sweep</code>), pi_basis (float64 SVD).
+        </div>
+        <p>Written as “no jax”, three headline producers cannot live in <code>analysis/</code>.
+          Separately, the boundary does not exist operationally yet at all: <code>run.sbatch</code>
+          and <code>analysis.sbatch</code> execute in the <em>same</em> mosaic container, so the
+          plan's Analysis gate is currently unverified rather than passing.</p>
+        <p class="rec"><b>Proposal:</b> state the contract as <em>“analysis imports no model backend
+          and loads no weights; jax as a numerics library is allowed”</em>, and enforce it with an
+          import-guard test written the way <code>pi_archive_test</code> is — asserting the refusal,
+          not the happy path.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Two things that will bite during the work</h2>
+    <div class="findings">
+      <div class="finding">
+        <h3>Cohorts have no manifest, so the collection API has nothing to read</h3>
+        <p>§6 opens with <code>Cohort.from_manifest("configs/cohorts/cross_model_assays.yaml")</code>.
+          No such file exists, and no cohort file exists anywhere in the repository. Today
+          <code>launch_gym2s.sh</code> iterates <code>for f in $W/runs/gym2_*.npz</code> — the identity
+          of the twelve assays is whatever a previous sweep happened to leave on disk. The §5 manifest
+          work is a hard dependency of the §3 collection surface, not a parallel track.</p>
+      </div>
+      <div class="finding">
+        <h3>Changing how scripts are invoked breaks the regression harness</h3>
+        <p>The check built today reruns each of the 17 report producers from the <code>argv</code>
+          recorded in its own archive. That is the only mechanism we have for proving old and new
+          agree, and it depends on those command lines staying runnable. Keep script-level argument
+          compatibility through the migration, or record a translation alongside the CLI.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Proposed order of work</h2>
+    <p>Ordered so that each step is verifiable by the harness before the next one starts, and so the
+      risky step comes after the boundaries are settled rather than before.</p>
+    <ol class="steps">
+      <li><div class="body"><strong>Reclaim the package path</strong>
+        <p>Move the dormant generation and lift the notebooks out of the package. No science touched,
+          and nothing else can be placed until the name is free.</p></div></li>
+      <li><div class="body"><strong>Write the schema that is already cited</strong>
+        <p><code>records.py</code> / <code>outputs.py</code>. The normalized dict returned by
+          <code>pi_models.run_one</code> is the de-facto schema; <code>pi_schema.py</code> is
+          referenced in a docstring but has never existed in any commit.</p></div></li>
+      <li><div class="body"><strong>Promote <code>pi_*</code> into the package</strong>
+        <p>Thin re-exports first, <code>jax_harness</code> still importable, no behaviour change —
+          then re-run the 17 producers and expect exact zeros, allowing the known
+          <code>analyze_svd</code> non-determinism band.</p></div></li>
+      <li><div class="body"><strong>Unify the adapters</strong>
+        <p><code>pi_models</code>'s interface becomes the contract; the Boltz-2 adapter wraps
+          <code>pi_core</code> rather than replacing it. This is the step with real scientific risk,
+          so it happens with the boundaries and the harness already in place.</p></div></li>
+      <li><div class="body"><strong>Then the CLI and the first experiment scripts</strong>
+        <p>The vertical slice the plan wants judged at the API gate — and the first honest test of
+          whether the surface is actually easy to read.</p></div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Edits I would make to the plan itself</h2>
+    <ul class="plain">
+      <li>Annotate the §3 tree with what already implements each module, so it stops reading as
+        greenfield and the scoping is visible.</li>
+      <li>Move <code>records.py</code> to the front of the collection list — it is cited by existing
+        code as though it were already there.</li>
+      <li>Reword the offline-analysis rule in §9 and §10 to name backends and weights rather than
+        environments in general.</li>
+      <li>Consider folding <code>prediction/</code> into <code>collection/</code>. One adapter call
+        already returns representations and predictions together; two packages with two runners
+        would duplicate the same forward pass.</li>
+      <li>Say explicitly that §5's manifests block §3's collection API, rather than listing them as
+        a later phase.</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Read against commit <code>fcceb3f</code> — 100 Python files in <code>jax_harness/</code> after
+    the cleanup, 17 report producers verified against <code>report_master</code>.
+  </div>
+</footer>

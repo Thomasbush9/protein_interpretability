@@ -10,4 +10,13 @@ wheels/
 .venv
 .DS_Store
 .egg-info
+__marimo__/
+tmp_mutation_signal/
 
+
+# Site profile: cluster- and user-specific paths, overriding configs/site/default.yaml
+configs/site/local.yaml
+
+# MSA staging dirs some wrappers write into cwd during a forward
+of3_msa/
+protenix_msa/

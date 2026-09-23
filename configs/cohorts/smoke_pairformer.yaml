@@ -1,0 +1,16 @@
+cohort: smoke_pairformer
+description: "One assay for the pair-layer vertical slice. A subset of basis_assays on purpose, so anything collected against it can be compared with an archive that already exists."
+derived_from: ARGR_ECOLI_Tsuboyama_2023_1AOY, chosen as the smallest real assay
+n_assays: 1
+assays:
+  - id: ARGR_ECOLI_Tsuboyama_2023_1AOY
+    assay_csv:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/assays/DMS_ProteinGym_substitutions/ARGR_ECOLI_Tsuboyama_2023_1AOY.csv
+      sha256: 894695a2c624ebb4d5d8378f7096f97043260c882ebf3051f1e2ea02c8bf4f88
+    n_single_variants: 1287
+    wt_length: 69
+    msa:
+      path: /n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/prot_interp_files/data/gym/panel2/colabfold_output/ARGR_ECOLI_Tsuboyama_2023_1AOY.a3m
+      sha256: 81178541e89dfab13dbda79f41d1f5f29abc35608582d7763d5e1352df92c54e
+      rows: 7056
+      panel: panel2

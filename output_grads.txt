@@ -1,3 +1,0 @@
-Checking input data.
-Processing 1 inputs with 1 threads.
-[attribution] 1 record(s) in manifest (/n/holylfs06/LABS/bsabatini_lab/Everyone/tbush/protein_rsa/grad_att/boltz_results_seq_00132)
